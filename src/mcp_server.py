@@ -1,4 +1,4 @@
-"""MCP server for AI Video Editor — exposes process_video, video_info, list_models."""
+"""MCP server for AI Video Editor — exposes process_video, video_info, list_models, list_skills."""
 
 from __future__ import annotations
 
@@ -18,19 +18,35 @@ def process_video(
     config_path: str | None = None,
     no_hook: bool = True,
     no_chapters: bool = True,
+    instructions: str | None = None,
+    skill: str | None = None,
+    plan_only: bool = False,
+    analysis_cache: str | None = None,
 ) -> str:
-    """Process a talking-head video: remove silences, filler words, restart phrases, and encode the final output.
+    """Edit a talking-head video. Without `instructions`/`skill` the rule-based Auto edit runs
+    (silences, filler-word lists, "cut cut" takes). With either, the AI editor runs: an LLM
+    reads the word-timestamped transcript and removes fillers, stutters, repeats, stalls and
+    rambling by judgement, following the chosen editing skill and the instructions.
 
     Args:
         video_path: Absolute path to the input video file.
         output_path: Output file path. Default: {input_name}_edited.mp4 in same directory.
-        whisper_model: Whisper model size. Options: tiny, base, small, medium, large, large-v2, large-v3. Default: large-v3.
+        whisper_model: Whisper model size: tiny, base, small, medium, large, large-v2, large-v3.
+            On CPU-only machines prefer "small" or "medium".
         config_path: Path to a custom YAML config file (merged over defaults).
-        no_hook: Skip smart hook generation (no OpenRouter call). Default: true.
-        no_chapters: Skip YouTube chapter generation (no OpenRouter call). Default: true.
+        no_hook: Skip smart hook generation (OpenRouter). Default: true.
+        no_chapters: Skip YouTube chapter generation (OpenRouter). Default: true.
+        instructions: Natural-language editing instructions for the AI editor, e.g.
+            "cut to under 60 seconds, drop the part about pricing, open with the strongest line".
+        skill: Editing skill id from list_skills(): clean, film-director, youtube-retention,
+            shorts, tutorial, interview (or a user-added one). Enables the AI editor.
+        plan_only: Return the AI's plan (kept/removed pieces with reasons) without rendering.
+        analysis_cache: JSON file to cache/reuse speech detection + transcription for this
+            video, so repeated plans/renders skip Whisper.
 
     Returns:
-        JSON string with status, output_video path, duration stats, and edit counts.
+        JSON string with status, output_video path, duration stats, edit counts, and — when
+        the AI editor ran — director_plan (summary, keep, removed with reasons, usage).
     """
     from .pipeline import run_pipeline, PipelineError
 
@@ -42,6 +58,10 @@ def process_video(
             output_path=Path(output_path) if output_path else None,
             no_hook=no_hook,
             no_chapters=no_chapters,
+            instructions=instructions,
+            skill=skill,
+            plan_only=plan_only,
+            analysis_cache=Path(analysis_cache) if analysis_cache else None,
         )
         return json.dumps(result, indent=2, ensure_ascii=False)
     except PipelineError as e:
@@ -104,6 +124,21 @@ def video_info(video_path: str) -> str:
         }
 
     return json.dumps(info, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_skills() -> str:
+    """List the editing skills the AI editor can follow (id, name, description).
+
+    Pass an id as `skill` to process_video. Skills are Markdown briefs in skills/;
+    users can add their own.
+    """
+    from .skills import load_skills
+
+    return json.dumps(
+        [{k: v for k, v in sk.items() if k in ("id", "name", "emoji", "description")} for sk in load_skills()],
+        indent=2, ensure_ascii=False,
+    )
 
 
 @mcp.tool()

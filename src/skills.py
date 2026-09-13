@@ -1,6 +1,10 @@
 """Editing skills — Markdown briefs (frontmatter + body) that shape how the AI editor cuts.
 
-Files live in <repo>/skills/*.md. The file stem is the skill id.
+Two layouts are accepted:
+  skills/<id>.md            — flat file (the built-ins)
+  skills/<id>/SKILL.md      — Agent Skills layout, so a skill folder can be shared
+                              with other agents (Claude Code, Codex, …) unchanged.
+The id is the file stem (flat) or the folder name.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ DEFAULT_SKILL = "clean"
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 
 
-def _parse(path: Path) -> dict:
+def _parse(path: Path, skill_id: str | None = None) -> dict:
     text = path.read_text(encoding="utf-8")
     meta: dict = {}
     body = text
@@ -29,9 +33,10 @@ def _parse(path: Path) -> dict:
         order = int(meta.get("order", 999))
     except ValueError:
         order = 999
+    sid = skill_id or path.stem
     return {
-        "id": path.stem,
-        "name": meta.get("name") or path.stem.replace("-", " ").title(),
+        "id": sid,
+        "name": meta.get("name") or sid.replace("-", " ").title(),
         "emoji": meta.get("emoji", ""),
         "description": meta.get("description", ""),
         "order": order,
@@ -44,13 +49,23 @@ def load_skills() -> list[dict]:
     if not SKILLS_DIR.is_dir():
         return []
     out = []
+    seen: set[str] = set()
     for p in SKILLS_DIR.glob("*.md"):
         if p.stem.lower() == "readme" or p.stem.startswith("_"):
             continue
         try:
-            out.append(_parse(p))
+            sk = _parse(p)
         except OSError:
             continue
+        out.append(sk)
+        seen.add(sk["id"])
+    for d in SKILLS_DIR.iterdir():
+        f = d / "SKILL.md"
+        if d.is_dir() and not d.name.startswith("_") and f.is_file() and d.name not in seen:
+            try:
+                out.append(_parse(f, d.name))
+            except OSError:
+                continue
     return sorted(out, key=lambda s: (s["order"], s["name"].lower()))
 
 

@@ -18,7 +18,17 @@ The brief itself, in plain language. Precedence: user instructions > skill > cor
 ```
 
 Add your own by dropping a file in this folder and pressing ↻ next to the
-selector (or restarting the GUI).
+selector (or restarting the GUI). A folder layout `skills/<id>/SKILL.md` is
+accepted too — that is the standard Agent Skills layout, so a skill folder can be
+copied unchanged into other agents (for Claude Code: `~/.claude/skills/<id>/SKILL.md`).
+
+## Using the skills from other agents
+
+- **CLI**: `ai-video-editor process talk.mp4 --skill film-director -i "under 2 minutes"`
+- **MCP** (Claude Desktop / Claude Code): `list_skills()` then
+  `process_video(video_path=..., skill="film-director", instructions="...")`;
+  `plan_only=True` returns the plan without rendering.
+- **GUI**: AI editor → Editing skill.
 
 ## Sources the built-in skills are distilled from
 
