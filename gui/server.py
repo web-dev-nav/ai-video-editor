@@ -58,8 +58,11 @@ STEP_RANGES = {
 }
 
 
-KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
-DEFAULT_MODELS = {"anthropic": "claude-opus-5", "openai": "gpt-5", "openrouter": "anthropic/claude-sonnet-4"}
+KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+           "nvidia": "NVIDIA_API_KEY"}
+DEFAULT_MODELS = {"anthropic": "claude-opus-5", "openai": "gpt-5", "openrouter": "anthropic/claude-sonnet-4",
+                  "nvidia": "nvidia/nemotron-3-super-120b-a12b"}
+NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
 def _load_env_file() -> None:
@@ -94,7 +97,7 @@ def _pricing(provider: str, model: str) -> dict | None:
     """USD per 1M tokens for a model: live from OpenRouter's catalogue, else the static table."""
     if not model:
         return None
-    or_id = model if provider == "openrouter" else f"{provider}/{model}"
+    or_id = model if provider in ("openrouter", "nvidia") else f"{provider}/{model}"
     try:
         for m in list_models("openrouter"):
             if m["id"] == or_id and m.get("pricing"):
@@ -149,6 +152,18 @@ def list_models(provider: str, force: bool = False) -> list[dict]:
                     and not any(k in mid for k in skip):
                 models.append({"id": mid, "name": mid, "created": getattr(m, "created", 0) or 0})
         models.sort(key=lambda m: -m["created"])
+    elif provider == "nvidia":
+        import openai
+        client = openai.OpenAI(base_url=NVIDIA_NIM_BASE_URL, api_key=os.environ.get("NVIDIA_API_KEY") or "public")
+        skip = ("embed", "rerank", "vision", "vila", "clip", "guard", "safety", "asr", "tts", "parakeet", "riva",
+                "stt", "ocr", "paddle", "yolo", "molmim", "diffusion", "sdxl", "cosmos", "fuyu", "omni", "kosmos",
+                "neva", "deplot", "reward", "parse", "detector", "calibration", "code", "starcoder", "muse")
+        for m in client.models.list():
+            mid = m.id
+            if not any(k in mid.lower() for k in skip):
+                models.append({"id": mid, "name": mid, "created": getattr(m, "created", 0) or 0})
+        rank = {"nvidia": 0, "deepseek-ai": 1, "moonshotai": 2, "mistralai": 3, "google": 4, "meta": 5, "openai": 6}
+        models.sort(key=lambda m: (rank.get(m["id"].split("/")[0], 9), m["id"]))
     elif provider == "openrouter":
         import httpx
         r = httpx.get("https://openrouter.ai/api/v1/models", timeout=20)
@@ -770,7 +785,7 @@ async def api_models(request: Request):
     force = request.query_params.get("refresh") == "1"
     if provider not in KEY_ENV:
         return JSONResponse({"error": "unknown provider"}, status_code=400)
-    if provider != "openrouter" and not os.environ.get(KEY_ENV[provider]):
+    if provider not in ("openrouter", "nvidia") and not os.environ.get(KEY_ENV[provider]):
         return JSONResponse({"error": f"No {provider} API key set", "models": []}, status_code=200)
     try:
         return JSONResponse({"models": list_models(provider, force)})

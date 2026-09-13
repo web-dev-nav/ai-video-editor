@@ -1,26 +1,33 @@
 """Provider-agnostic text completion for the AI Director step.
 
-Supports three providers, selected by config["director"]["provider"]:
+Supports four providers, selected by config["director"]["provider"]:
   - "anthropic"  — official ``anthropic`` SDK, key from ANTHROPIC_API_KEY
   - "openai"     — official ``openai`` SDK (Responses API), key from OPENAI_API_KEY
   - "openrouter" — the repo's existing httpx client, key from OPENROUTER_API_KEY
+  - "nvidia"     — NVIDIA NIM (build.nvidia.com), OpenAI-compatible endpoint at
+                   https://integrate.api.nvidia.com/v1, key from NVIDIA_API_KEY
 """
 
 from __future__ import annotations
 
 import os
+import re
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",
     "openai": "gpt-5",
     "openrouter": "anthropic/claude-sonnet-4",
+    "nvidia": "nvidia/nemotron-3-super-120b-a12b",
 }
 
 KEY_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
 }
+
+NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
 class LLMError(RuntimeError):
@@ -55,6 +62,8 @@ def complete(
         return _openai(prompt, system, model, max_tokens)
     if provider == "openrouter":
         return _openrouter(prompt, system, model, max_tokens)
+    if provider == "nvidia":
+        return _nvidia(prompt, system, model, max_tokens)
     raise LLMError(f"Unknown provider '{provider}'")
 
 
@@ -122,6 +131,41 @@ def _openai(prompt: str, system: str, model: str, max_tokens: int) -> tuple[str,
     usage = {
         "input_tokens": getattr(u, "input_tokens", None),
         "output_tokens": getattr(u, "output_tokens", None),
+        "model": getattr(resp, "model", model),
+    }
+    return text, usage
+
+
+def _nvidia(prompt: str, system: str, model: str, max_tokens: int) -> tuple[str, dict]:
+    """NVIDIA NIM speaks the OpenAI chat-completions dialect; reuse the openai client with a base_url."""
+    import openai
+
+    client = openai.OpenAI(base_url=NVIDIA_NIM_BASE_URL, api_key=os.environ["NVIDIA_API_KEY"])
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            max_tokens=min(max_tokens, 8192),  # most NIM models cap output well below 16k
+            temperature=0.2,
+        )
+    except openai.AuthenticationError as e:
+        raise LLMError(f"NVIDIA NIM: invalid API key ({e})") from e
+    except openai.NotFoundError as e:
+        raise LLMError(f"NVIDIA NIM: unknown model '{model}' ({e})") from e
+    except openai.RateLimitError as e:
+        raise LLMError(f"NVIDIA NIM: rate limited / out of credits ({e})") from e
+    except openai.APIStatusError as e:
+        raise LLMError(f"NVIDIA NIM API error {e.status_code}: {e}") from e
+    except openai.APIConnectionError as e:
+        raise LLMError(f"NVIDIA NIM: connection error ({e})") from e
+
+    text = resp.choices[0].message.content or ""
+    # Reasoning models (DeepSeek-R1 etc.) may wrap their thinking in <think> tags.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    u = getattr(resp, "usage", None)
+    usage = {
+        "input_tokens": getattr(u, "prompt_tokens", None),
+        "output_tokens": getattr(u, "completion_tokens", None),
         "model": getattr(resp, "model", model),
     }
     return text, usage

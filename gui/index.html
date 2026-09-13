@@ -248,6 +248,7 @@
               <option value="anthropic">Claude (Anthropic)</option>
               <option value="openai">ChatGPT (OpenAI)</option>
               <option value="openrouter">OpenRouter</option>
+              <option value="nvidia">NVIDIA NIM (build.nvidia.com)</option>
             </select></label>
           <label class="field"><span>Model <button class="small" id="btn-models" title="Reload model list" style="padding:0 6px;margin-left:4px">↻</button></span>
             <select id="director.model-select"></select>
@@ -374,12 +375,13 @@
 
 <dialog id="key-dialog">
   <h3 style="margin-top:0">API keys</h3>
-  <p class="hint">Stored in <code>.env</code> inside the repo and only sent to the provider you pick. Claude / ChatGPT keys power the AI editor; OpenRouter also powers the hook &amp; chapters extras.</p>
+  <p class="hint">Stored in <code>.env</code> inside the repo and only sent to the provider you pick. Claude / ChatGPT / NVIDIA NIM keys power the AI editor; OpenRouter also powers the hook &amp; chapters extras. NIM keys come from <a href="https://build.nvidia.com" target="_blank" style="color:var(--accent)">build.nvidia.com</a> (free trial credits).</p>
   <label class="field"><span>Provider</span>
     <select id="key-provider">
       <option value="anthropic">Claude (Anthropic) — ANTHROPIC_API_KEY</option>
       <option value="openai">ChatGPT (OpenAI) — OPENAI_API_KEY</option>
       <option value="openrouter">OpenRouter — OPENROUTER_API_KEY</option>
+      <option value="nvidia">NVIDIA NIM — NVIDIA_API_KEY (nvapi-…)</option>
     </select></label>
   <input type="password" id="key-input" placeholder="paste key (leave empty to remove)">
   <div class="actions" style="justify-content:flex-end"><button id="key-cancel" class="small">Cancel</button><button id="key-save" class="small">Save</button></div>
@@ -429,7 +431,7 @@ function updateWhisperBox() {
   else { txt.innerHTML = `<b>${m}</b> is not downloaded yet (${fmtMB(w.total)}). It downloads automatically on first use — or download it now so the first job isn't slow.`; }
   if (w.state === "downloading" && !whisperPoll) whisperPoll = setInterval(async () => { const st = await api(`/api/whisper/status?model=${m}`); WHISPER[m] = st; updateWhisperBox(); if (st.state !== "downloading") { clearInterval(whisperPoll); whisperPoll = null; refreshWhisper(); } }, 1000);
 }
-const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter" };
+const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter", nvidia: "NVIDIA NIM" };
 
 let BOOT = null, DEFAULTS = null, clips = [], currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
 let editMode = localStorage.getItem("ave.mode") || "auto";
@@ -822,7 +824,7 @@ byId("key-save").onclick = async () => {
   BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true);
 };
 function setKeyPill() {
-  byId("key-pills").innerHTML = Object.entries({ anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter" })
+  byId("key-pills").innerHTML = Object.entries({ anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", nvidia: "NVIDIA" })
     .map(([k, n]) => `<span class="pill ${BOOT.keys[k] ? "ok" : ""}" title="${BOOT.keys[k] ? "key set" : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}</span>`).join("");
 }
 

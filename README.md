@@ -40,8 +40,9 @@ reason; you review the plan in the GUI, restore or drop pieces, ask for
 revisions, then render. Dead air is still trimmed by voice detection.
 
 Providers: **Anthropic** (`ANTHROPIC_API_KEY`), **OpenAI** (`OPENAI_API_KEY`),
-or **OpenRouter** (`OPENROUTER_API_KEY`). Model lists are fetched live from the
-provider in the GUI.
+**OpenRouter** (`OPENROUTER_API_KEY`), or **NVIDIA NIM** (`NVIDIA_API_KEY`, from
+[build.nvidia.com](https://build.nvidia.com) — Llama, Nemotron, DeepSeek, Mistral, Qwen…).
+Model lists are fetched live from the provider in the GUI.
 
 ```bash
 # plan only (cached analysis → re-planning is seconds)
@@ -138,6 +139,7 @@ GUI via **API keys**, or in `.env`:
 ANTHROPIC_API_KEY=sk-ant-...     # Claude
 OPENAI_API_KEY=sk-...            # ChatGPT
 OPENROUTER_API_KEY=sk-or-...     # OpenRouter (also used by hook/chapters)
+NVIDIA_API_KEY=nvapi-...         # NVIDIA NIM
 ```
 
 ### CLI only
