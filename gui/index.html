@@ -315,9 +315,13 @@
               <label class="field"><span>Audio bitrate</span><input type="text" id="encoding.audio_bitrate"></label>
             </div>
           </details>
-          <div class="actions"><button id="btn-reset" class="small">Reset to defaults</button><button id="btn-save-preset" class="small">Remember my settings</button></div>
         </div>
       </details>
+      <div class="actions" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:10px">
+        <button id="btn-save-preset" class="small">💾 Remember my settings</button>
+        <button id="btn-reset" class="small">Reset to defaults</button>
+      </div>
+      <div class="hint" id="preset-hint" style="margin:6px 0 0"></div>
     </div>
   </section>
 
@@ -485,8 +489,9 @@ function updateTags() {
 byId("col-settings").addEventListener("input", updateTags);
 byId("col-settings").addEventListener("change", updateTags);
 byId("lut-select").addEventListener("change", () => { if (byId("lut-select").value) byId("lut").value = ""; updateTags(); });
-byId("btn-reset").onclick = () => { applyDefaults(DEFAULTS); localStorage.removeItem("ave.preset"); };
-byId("btn-save-preset").onclick = () => { localStorage.setItem("ave.preset", JSON.stringify(collectOptions())); flash(byId("btn-save-preset"), "Saved ✓"); };
+byId("btn-reset").onclick = () => { applyDefaults(DEFAULTS); byId("ai.review").checked = true; localStorage.removeItem("ave.preset"); presetHint(); updateRunButton(); };
+byId("btn-save-preset").onclick = () => { localStorage.setItem("ave.preset", JSON.stringify({ ...collectOptions(), review: byId("ai.review").checked })); flash(byId("btn-save-preset"), "Saved ✓"); presetHint(); };
+function presetHint() { byId("preset-hint").textContent = localStorage.getItem("ave.preset") ? "Your saved settings are loaded automatically when this page opens (both modes, all sections)." : "Settings reset to defaults each time the page opens — press Remember to keep them."; }
 function flash(btn, text) { const t = btn.textContent; btn.textContent = text; setTimeout(() => btn.textContent = t, 1200); }
 function applyPreset(o) {
   const d = JSON.parse(JSON.stringify(DEFAULTS));
@@ -498,6 +503,7 @@ function applyPreset(o) {
   Object.assign(d.hook, o.hook); Object.assign(d.chapters, o.chapters); Object.assign(d.encoding, o.encoding);
   d.director = Object.assign(d.director || {}, o.director || {});
   applyDefaults(d);
+  if (typeof o.review === "boolean") byId("ai.review").checked = o.review;
 }
 
 // ─────────────── model list ───────────────
@@ -746,7 +752,7 @@ function setKeyPill() {
   if (preset) { try { applyPreset(JSON.parse(preset)); } catch { applyDefaults(DEFAULTS); } } else applyDefaults(DEFAULTS);
   const roots = byId("roots");
   for (const r of BOOT.roots) { const b = document.createElement("button"); b.textContent = r.label; b.onclick = () => browse(r.path); roots.appendChild(b); }
-  setMode(editMode);
+  setMode(editMode); presetHint();
   browse(localStorage.getItem("ave.cwd") || (BOOT.roots[0] && BOOT.roots[0].path));
   refreshJobs();
   loadModels();
