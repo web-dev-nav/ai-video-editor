@@ -30,6 +30,7 @@ def run_pipeline(
     no_hook: bool = False,
     no_chapters: bool = False,
     instructions: str | None = None,
+    skill: str | None = None,
     plan_only: bool = False,
     analysis_cache: str | Path | None = None,
     keep_override: list[dict] | None = None,
@@ -77,6 +78,9 @@ def run_pipeline(
     config.setdefault("director", {})
     if instructions is not None:
         config["director"]["instructions"] = instructions
+        config["director"]["enabled"] = True
+    if skill:
+        config["director"]["skill"] = skill
         config["director"]["enabled"] = True
 
     # Probe original video duration

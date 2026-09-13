@@ -266,6 +266,9 @@
             <input type="text" id="director.model" placeholder="custom model id" style="margin-top:6px" hidden></label>
         </div>
         <div class="hint" id="director-key-hint"></div>
+        <label class="field"><span>Editing skill <button class="small" id="btn-skills" title="Reload skills from the skills/ folder" style="padding:0 6px;margin-left:4px">↻</button> <button class="small" id="btn-skill-view" style="padding:0 6px">view brief</button></span>
+          <select id="director.skill"></select></label>
+        <div class="hint" id="skill-desc"></div>
         <div class="hint">★ = recommended for this job. Start with <b>Claude Sonnet 5</b> (≈ $0.10 per 20-min talk); switch to <b>Opus 5</b> for messy speech or Hindi. Avoid mini/nano/flash-class models — they mangle timestamps.</div>
         <div class="hint" style="margin-bottom:4px">Target length — click to add it to the instructions:</div>
         <div class="chips" id="target-chips"></div>
@@ -401,6 +404,13 @@
   <div class="actions" style="justify-content:flex-end"><button id="key-cancel" class="small">Cancel</button><button id="key-save" class="small">Save</button></div>
 </dialog>
 
+<dialog id="skill-dialog">
+  <h3 style="margin-top:0" id="skill-title"></h3>
+  <p class="hint" id="skill-path"></p>
+  <pre class="chapters" id="skill-text" style="max-height:60vh;overflow:auto;white-space:pre-wrap"></pre>
+  <div class="actions" style="justify-content:flex-end"><button id="skill-close" class="small">Close</button></div>
+</dialog>
+
 <dialog id="config-dialog">
   <h3 style="margin-top:0">Config passed to the CLI</h3>
   <pre class="chapters" id="config-text" style="max-height:60vh;overflow:auto"></pre>
@@ -427,6 +437,16 @@ const MODEL_NOTES = {
   "large-v3": "~1× realtime · best accuracy (slowest on CPU)",
 };
 const fmtMB = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`;
+let SKILLS = [];
+async function loadSkills() {
+  try { const d = await api("/api/skills"); SKILLS = d.skills; SKILLS_DIR = d.dir; } catch { SKILLS = []; }
+  const sel = byId("director.skill"), cur = sel.value || (DEFAULTS.director && DEFAULTS.director.skill) || "clean";
+  sel.innerHTML = SKILLS.map(sk => `<option value="${esc(sk.id)}">${sk.emoji ? sk.emoji + " " : ""}${esc(sk.name)}</option>`).join("");
+  sel.value = SKILLS.some(sk => sk.id === cur) ? cur : (SKILLS[0] ? SKILLS[0].id : "");
+  updateSkillDesc();
+}
+let SKILLS_DIR = "";
+function updateSkillDesc() { const sk = SKILLS.find(x => x.id === byId("director.skill").value); byId("skill-desc").textContent = sk ? sk.description : ""; }
 let WHISPER = {};   // model -> status
 async function refreshWhisper() {
   try { const d = await api("/api/whisper/models"); for (const m of d.models) WHISPER[m.model] = m; } catch {}
@@ -534,6 +554,7 @@ function applyDefaults(d) {
   byId("director.provider").value = dd.provider || "anthropic";
   byId("director.model").value = dd.model || BOOT.default_models[dd.provider || "anthropic"];
   byId("director.mode").value = dd.mode || "ai";
+  if (dd.skill && byId("director.skill").querySelector(`option[value="${dd.skill}"]`)) byId("director.skill").value = dd.skill;
   byId("director.instructions").value = dd.instructions || "";
   byId("encoding.codec").value = d.encoding.codec; byId("encoding.quality").value = d.encoding.quality; byId("encoding.audio_bitrate").value = d.encoding.audio_bitrate;
   updateTags();
@@ -549,7 +570,7 @@ function collectOptions() {
     lut: byId("lut").value.trim() || byId("lut-select").value || null,
     hook: { enabled: byId("hook.enabled").checked, duration_sec: num("hook.duration_sec"), model: byId("hook.model").value.trim() },
     chapters: { enabled: byId("chapters.enabled").checked, model: byId("chapters.model").value.trim() },
-    director: { enabled: editMode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, instructions: byId("director.instructions").value.trim() },
+    director: { enabled: editMode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, instructions: byId("director.instructions").value.trim() },
     encoding: { codec: byId("encoding.codec").value, quality: num("encoding.quality"), audio_bitrate: byId("encoding.audio_bitrate").value.trim() },
   };
 }
@@ -614,6 +635,10 @@ byId("director.model-select").addEventListener("change", () => {
   updateTags();
 });
 byId("btn-models").onclick = (e) => { e.preventDefault(); loadModels(true); };
+byId("btn-skills").onclick = (e) => { e.preventDefault(); loadSkills(); flash(byId("btn-skills"), "✓"); };
+byId("director.skill").addEventListener("change", updateSkillDesc);
+byId("btn-skill-view").onclick = (e) => { e.preventDefault(); const sk = SKILLS.find(x => x.id === byId("director.skill").value); if (!sk) return; byId("skill-title").textContent = `${sk.emoji || ""} ${sk.name}`; byId("skill-path").textContent = `${SKILLS_DIR}/${sk.id}.md — edit the file or add your own, then press ↻`; byId("skill-text").textContent = sk.body; byId("skill-dialog").showModal(); };
+byId("skill-close").onclick = () => byId("skill-dialog").close();
 byId("director.provider").addEventListener("change", () => { byId("director.model").value = BOOT.default_models[byId("director.provider").value]; updateTags(); loadModels(); });
 
 // ─────────────── file browser ───────────────
@@ -786,7 +811,7 @@ function renderResult(j) {
   const saved = r.duration_original_sec - r.duration_edited_sec, winOut = toWin(r.output_video);
   box.innerHTML = `
     <div class="banner ok">Done in ${fmtSec(r.processing_time_sec)} — saved to<br><span class="path">${esc(winOut || r.output_video)}</span></div>
-    ${r.director_plan ? `<div class="plan-summary"><b>AI editor:</b> ${esc(r.director_plan.summary || "")}</div>` : ""}
+    ${r.director_plan ? `<div class="plan-summary"><b>AI editor${r.director_plan.skill_name ? ` · ${esc(r.director_plan.skill_name)}` : ""}:</b> ${esc(r.director_plan.summary || "")}</div>` : ""}
     <div class="stats">
       <div class="stat"><b>${fmtSec(r.duration_original_sec)} → ${fmtSec(r.duration_edited_sec)}</b><span>duration (−${saved.toFixed(1)}s, ${Math.round(saved / r.duration_original_sec * 100)}%)</span></div>
       ${r.director_plan ? `<div class="stat"><b>${r.director_plan.removed.length}</b><span>AI cuts</span></div><div class="stat"><b>${r.director_plan.keep.length}</b><span>pieces kept</span></div>`
@@ -824,7 +849,7 @@ function renderPlan(j) {
       <div><span class="t">${fmtSec(p.start)} → ${fmtSec(p.end)} (${(p.end - p.start).toFixed(1)}s)</span>
       ${p.note ? `<div class="why ok">${esc(p.note)}</div>` : ""}${p.reason ? `<div class="why">${esc(p.reason)}</div>` : ""}
       <div class="txt">${esc(p.text || "")}</div></div></label>`;
-  html += `<div class="plan-summary"><b>${esc(plan.model || plan.provider)} says:</b> ${esc(plan.summary || "")}
+  html += `<div class="plan-summary"><b>${esc(plan.model || plan.provider)}${plan.skill_name ? ` · ${esc(plan.skill_name)}` : ""} says:</b> ${esc(plan.summary || "")}
       <div class="cats">${Object.entries(cats).map(([c, n]) => `<span>${n} × ${esc(c)}</span>`).join("")}</div></div>
     <div class="stats"><div class="stat"><b>${fmtSec(plan.duration_before_sec)} → ${fmtSec(plan.duration_after_sec)}</b><span>speech → after AI edit</span></div>
       <div class="stat"><b>${plan.keep.length}</b><span>pieces kept${plan.reordered ? " (reordered)" : ""}</span></div>
@@ -898,6 +923,8 @@ function setKeyPill() {
   if (preset) { try { applyPreset(JSON.parse(preset)); } catch { applyDefaults(DEFAULTS); } } else applyDefaults(DEFAULTS);
   const roots = byId("roots");
   for (const r of BOOT.roots) { const b = document.createElement("button"); b.textContent = r.label; b.onclick = () => browse(r.path); roots.appendChild(b); }
+  await loadSkills();
+  const preset2 = localStorage.getItem("ave.preset"); if (preset2) { try { const o = JSON.parse(preset2); if (o.director && o.director.skill) byId("director.skill").value = o.director.skill; updateSkillDesc(); } catch {} }
   setMode(editMode); presetHint();
   browse(localStorage.getItem("ave.cwd") || (BOOT.roots[0] && BOOT.roots[0].path));
   refreshJobs();

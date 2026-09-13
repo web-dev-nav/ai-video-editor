@@ -57,6 +57,7 @@ director:
   provider: anthropic     # anthropic | openai | openrouter (keys: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY)
   model: claude-opus-5    # provider-specific model id
   mode: ai                # ai = the model judges every word (fillers, repeats, stalls) — no word lists; refine = model picks content on top of the rule-based cut; full = model ranges as-is
+  skill: clean            # editing skill from skills/*.md: clean | film-director | youtube-retention | shorts | tutorial | interview
   instructions: ""        # e.g. "cut to under 60s, drop the tangent about the weather"
   boundary_padding_sec: 0.15
 

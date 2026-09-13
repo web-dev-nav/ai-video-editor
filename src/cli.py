@@ -67,6 +67,11 @@ def process(
         "-i",
         help="AI Director: natural-language editing instructions (enables the director step).",
     ),
+    skill: str | None = typer.Option(
+        None,
+        "--skill",
+        help="AI Director editing skill (file stem in skills/): clean, film-director, youtube-retention, shorts, tutorial, interview.",
+    ),
     plan_only: bool = typer.Option(
         False,
         "--plan-only",
@@ -111,6 +116,7 @@ def process(
             no_hook=no_hook,
             no_chapters=no_chapters,
             instructions=instructions,
+            skill=skill,
             plan_only=plan_only,
             analysis_cache=analysis_cache,
             keep_override=keep_override,

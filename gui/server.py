@@ -511,6 +511,7 @@ def _build_config(p: dict) -> dict:
     cfg["director"]["model"] = d.get("model") or DEFAULT_MODELS.get(cfg["director"]["provider"], "")
     cfg["director"]["mode"] = d.get("mode") or "ai"
     cfg["director"]["instructions"] = d.get("instructions") or ""
+    cfg["director"]["skill"] = d.get("skill") or "clean"
 
     e = o.get("encoding", {})
     cfg["encoding"]["codec"] = e.get("codec", "libx264")
@@ -832,6 +833,15 @@ async def api_save_key(request: Request):
     return JSONResponse({"ok": True, "keys": keys, "api_key_present": keys["openrouter"]})
 
 
+async def api_skills(request: Request):
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.skills import load_skills
+    return JSONResponse({"skills": [{k: v for k, v in sk.items() if k != "body"} | {"body": sk["body"]} for sk in load_skills()],
+                         "dir": str(REPO / "skills")})
+
+
 async def api_whisper_models(request: Request):
     return JSONResponse({"models": [whisper_status(m) for m in WHISPER_MODELS], "cache_dir": str(HF_CACHE)})
 
@@ -1049,6 +1059,7 @@ routes = [
     Route("/api/bootstrap", api_bootstrap),
     Route("/api/key", api_save_key, methods=["POST"]),
     Route("/api/models", api_models),
+    Route("/api/skills", api_skills),
     Route("/api/whisper/models", api_whisper_models),
     Route("/api/whisper/download", api_whisper_download, methods=["POST"]),
     Route("/api/whisper/status", api_whisper_status),

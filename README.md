@@ -45,6 +45,26 @@ Providers: **Anthropic** (`ANTHROPIC_API_KEY`), **OpenAI** (`OPENAI_API_KEY`),
 Model lists are fetched live from the provider in the GUI; recommended models are
 starred and listed first.
 
+#### Editing skills
+
+The AI editor follows an **editing skill** — a Markdown brief in [`skills/`](skills/)
+that encodes a craft: how aggressively to cut, what structure to build, how to
+open and end. Built-in:
+
+| Skill | Use for |
+|---|---|
+| 🧹 Clean-up | Same talk, minus fillers, stumbles, repeats (default) |
+| 🎬 Film Director | Emotion and story first — Walter Murch's Rule of Six, dramatic beats, deliberate rhythm, a resonant ending; may reorder to open in tension |
+| 📈 YouTube Retention | Long-form: front-load the promise, kill lead-ins and flat landings, keep re-hooks, never announce the ending |
+| 📱 Shorts / Reels | One idea, hook in 3 s, 15–45 s, ends on the payoff |
+| 🎓 Tutorial / Educational | Every step and warning kept in order; digressions and tech trouble cut |
+| 🎙️ Interview / Podcast | Best answer per question, natural flow kept, crosstalk and tangents cut |
+
+Pick one in the GUI (AI editor → Editing skill, "view brief" shows the text) or
+with `--skill film-director` on the CLI. Add your own by dropping a `.md` file in
+`skills/` — format and sources in [`skills/README.md`](skills/README.md).
+Precedence: your instructions > the skill > the core rules.
+
 #### Which model should I pick?
 
 The job is: read a word-timestamped transcript (a 10-minute talk ≈ 15k tokens),

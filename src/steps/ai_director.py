@@ -20,6 +20,7 @@ import json
 import re
 from typing import Any
 
+from ..skills import get_skill
 from ..utils.json_output import emit_progress
 from ..utils.llm import LLMError, complete
 
@@ -42,6 +43,10 @@ What to remove (judge each case in context — there is no word list):
    keep short natural breaths.
 5. Anything the user's instructions ask for (target length, drop a topic, reorder,
    open with the strongest line…). Instructions win over the defaults above.
+
+An EDITING SKILL may follow these rules. It refines the defaults above (what to
+cut, how aggressively, structure, pacing, endings). Precedence: the user's
+instructions > the editing skill > these defaults.
 
 How to cut:
 - Word precision: a range starts at the start time of its first kept word and ends
@@ -84,11 +89,16 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     total = float(context.get("total_duration", 0.0))
     rule_keep: list[dict] = base_segments(context, config, mode) or []
 
-    emit_progress("analysis", "director", 0.1, f"AI Director: asking {provider}/{model or 'default'}...")
-    prompt = _build_prompt(transcript, rule_keep, total, instructions or "(none — do a standard clean-up)", mode)
+    skill = get_skill(cfg.get("skill"))
+    system = SYSTEM_PROMPT
+    if skill:
+        system += f"\n\nEDITING SKILL — {skill['name']}:\n{skill['body']}"
+    emit_progress("analysis", "director", 0.1,
+                  f"AI Director ({skill['name'] if skill else 'no skill'}): asking {provider}/{model or 'default'}...")
+    prompt = _build_prompt(transcript, rule_keep, total, instructions or "(none — follow the editing skill)", mode)
 
     try:
-        text, usage = complete(prompt, SYSTEM_PROMPT, provider, model)
+        text, usage = complete(prompt, system, provider, model)
     except LLMError as e:
         raise RuntimeError(f"AI Director failed: {e}") from e
 
@@ -111,6 +121,8 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         "provider": provider,
         "model": usage.get("model") or model,
         "mode": mode,
+        "skill": skill["id"] if skill else None,
+        "skill_name": skill["name"] if skill else None,
         "instructions": instructions,
         "usage": usage,
         "keep": [
