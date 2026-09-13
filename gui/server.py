@@ -1014,25 +1014,6 @@ async def api_save_key(request: Request):
     return JSONResponse({"ok": True, "keys": keys, "api_key_present": keys["openrouter"]})
 
 
-async def api_quota(request: Request):
-    """Live balance where a provider exposes one (OpenRouter). Others: not available."""
-    out: dict = {}
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if key:
-        try:
-            import httpx
-            r = httpx.get("https://openrouter.ai/api/v1/credits", headers={"Authorization": f"Bearer {key}"}, timeout=8)
-            if r.status_code == 200:
-                d = r.json().get("data", {})
-                total, used = float(d.get("total_credits", 0)), float(d.get("total_usage", 0))
-                out["openrouter"] = {"remaining": round(total - used, 4), "total": total, "used": used}
-            else:
-                out["openrouter"] = {"error": f"HTTP {r.status_code}"}
-        except Exception as exc:  # noqa: BLE001
-            out["openrouter"] = {"error": str(exc)[:120]}
-    return JSONResponse(out)
-
-
 async def api_skills(request: Request):
     import sys
     if str(REPO) not in sys.path:
@@ -1260,7 +1241,6 @@ routes = [
     Route("/api/key", api_save_key, methods=["POST"]),
     Route("/api/models", api_models),
     Route("/api/skills", api_skills),
-    Route("/api/quota", api_quota),
     Route("/api/whisper/models", api_whisper_models),
     Route("/api/whisper/download", api_whisper_download, methods=["POST"]),
     Route("/api/whisper/status", api_whisper_status),

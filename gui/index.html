@@ -965,23 +965,11 @@ byId("btn-key").onclick = () => { byId("key-input").value = ""; byId("key-provid
 byId("key-cancel").onclick = () => byId("key-dialog").close();
 byId("key-save").onclick = async () => {
   const r = await api("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: byId("key-provider").value, api_key: byId("key-input").value }) });
-  BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true); refreshQuota();
+  BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true);
 };
-let QUOTA = {};
-async function refreshQuota() {
-  try { QUOTA = await api("/api/quota"); } catch { QUOTA = {}; }
-  setKeyPill();
-  const orq = QUOTA.openrouter;
-  if (orq && orq.remaining != null && orq.remaining < 0.5) showAlert("low", `<b>OpenRouter balance is ${usd(orq.remaining)}.</b> Hook/chapters and OpenRouter-routed edits will fail once it hits zero — top up at openrouter.ai/credits or use another provider for the AI editor.`);
-}
 function setKeyPill() {
   byId("key-pills").innerHTML = Object.entries({ anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", nvidia: "NVIDIA" })
-    .map(([k, n]) => {
-      const q = QUOTA[k];
-      const bal = q && q.remaining != null ? ` · ${usd(q.remaining)} left` : "";
-      const low = q && q.remaining != null && q.remaining < 0.5;
-      return `<span class="pill ${BOOT.keys[k] ? (low ? "warn" : "ok") : ""}" title="${BOOT.keys[k] ? "key set" + (q && q.error ? " · balance unavailable: " + esc(q.error) : "") : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}${bal}</span>`;
-    }).join("");
+    .map(([k, n]) => `<span class="pill ${BOOT.keys[k] ? "ok" : ""}" title="${BOOT.keys[k] ? "key set" : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}</span>`).join("");
 }
 
 // ─────────────── boot ───────────────
@@ -1004,7 +992,6 @@ function setKeyPill() {
   refreshJobs();
   loadModels();
   refreshWhisper();
-  refreshQuota();
 })();
 </script>
 </body>

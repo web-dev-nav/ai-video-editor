@@ -127,9 +127,9 @@ source with its transcript remapped from the original — no re-transcription �
   setting, or fit over a blurred background) or square. Picking a Shorts/Reel
   target chip switches to vertical automatically; the platform-fit line reflects
   the real output size.
-- **Limit alerts**: provider errors are classified — credits/quota exhausted,
-  rate-limited, bad key, retired model — and shown as a banner with what to do.
-  OpenRouter's live balance is shown in the header and warns when it runs low.
+- **Limit alerts**: when a call fails because credits/quota are exhausted,
+  you are rate-limited, the key is rejected or the model was retired, a banner
+  says so and what to do. No balances are polled or displayed.
 
 ### Whisper model downloads
 
