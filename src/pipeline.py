@@ -220,6 +220,12 @@ def run_pipeline(
         "chapters": context.get("chapters"),
         "director_plan": context.get("director_plan"),
         "director_removed_sec": edit_stats.get("director_removed_sec", 0.0),
+        # Kept ranges of the *input* in playback order — lets a GUI map the transcript
+        # onto the output so the result can be edited again without re-transcribing.
+        "keep_segments": [
+            {"start": float(s[0]), "end": float(s[1])} if isinstance(s, (tuple, list)) else s
+            for s in context.get("keep_segments", [])
+        ],
         "processing_time_sec": timer.elapsed(),
     }
 

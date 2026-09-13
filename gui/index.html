@@ -85,7 +85,17 @@
   .drop.over { border-color: var(--accent); color: var(--text); background: rgba(91,140,255,.08); }
   .drop input { display: none; }
   video { width: 100%; border-radius: 8px; background: #000; margin-top: 10px; max-height: 240px; }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; margin-top: 8px; }
+  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; font-size: 12px; margin-top: 8px; }
+  .kv div { min-width: 0; overflow-wrap: anywhere; }
+  .card, .clip, .plan-piece, .banner { min-width: 0; overflow-wrap: anywhere; }
+  .fit { margin-top: 10px; font-size: 12px; }
+  .fit .row-b { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .badge-ok, .badge-no, .badge-warn { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid; }
+  .badge-ok { color: var(--ok); border-color: rgba(62,207,142,.4); background: rgba(62,207,142,.08); }
+  .badge-no { color: var(--err); border-color: rgba(255,92,92,.4); background: rgba(255,92,92,.08); }
+  .badge-warn { color: var(--warn); border-color: rgba(245,176,67,.4); background: rgba(245,176,67,.08); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .chips button { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; }
   .kv div:nth-child(odd) { color: var(--muted); }
   .path { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
 
@@ -184,6 +194,7 @@
       <div class="actions" style="margin-top:4px"><button class="small" id="btn-clear-clips">Clear all</button><span class="hint" id="clips-hint" style="margin:0"></span></div>
       <video id="preview" controls preload="metadata"></video>
       <div class="kv" id="info"></div>
+      <div class="fit" id="fit-source"></div>
     </div>
   </section>
 
@@ -256,7 +267,9 @@
         </div>
         <div class="hint" id="director-key-hint"></div>
         <div class="hint">★ = recommended for this job. Start with <b>Claude Sonnet 5</b> (≈ $0.10 per 20-min talk); switch to <b>Opus 5</b> for messy speech or Hindi. Avoid mini/nano/flash-class models — they mangle timestamps.</div>
-        <label class="field"><span>Instructions (optional — leave empty for a standard clean-up)</span>
+        <div class="hint" style="margin-bottom:4px">Target length — click to add it to the instructions:</div>
+        <div class="chips" id="target-chips"></div>
+        <label class="field"><span>Instructions (optional — leave empty for a standard clean-up; you can refer to times, e.g. "remove 0:42–0:55")</span>
           <textarea id="director.instructions" style="min-height:80px" placeholder="e.g. Keep it under 60 seconds. Drop the part about the weather. Open with the strongest line. Keep my jokes."></textarea></label>
         <label class="switch"><input type="checkbox" id="ai.review" checked> Show me the plan before rendering (recommended)</label>
         <details>
@@ -434,6 +447,28 @@ function updateWhisperBox() {
 }
 const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter", nvidia: "NVIDIA NIM" };
 
+// Platform limits (as of 2025). Shorts/Reels also expect vertical 9:16.
+const PLATFORMS = [
+  { name: "YouTube Shorts", max: 180, vertical: true },
+  { name: "Instagram Reels", max: 180, vertical: true },
+  { name: "Facebook Reels", max: 90, vertical: true },
+  { name: "YouTube video", max: 12 * 3600, vertical: false },
+  { name: "Facebook video", max: 240 * 60, vertical: false },
+  { name: "Instagram feed video", max: 60 * 60, vertical: false },
+];
+const mmss = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+function fitHTML(durationSec, w, h, label) {
+  if (!durationSec) return "";
+  const cls = durationSec <= 60 ? "very short (≤ 1 min)" : durationSec <= 180 ? "short-form (≤ 3 min)" : durationSec <= 600 ? "medium (3–10 min)" : "long-form (> 10 min)";
+  const vertical = w && h ? h > w : null;
+  const badges = PLATFORMS.map(p => {
+    const ok = durationSec <= p.max;
+    const orient = p.vertical && vertical === false ? " · landscape (expects 9:16)" : "";
+    const c = !ok ? "badge-no" : orient ? "badge-warn" : "badge-ok";
+    return `<span class="${c}" title="max ${mmss(p.max)}">${ok ? "✓" : "✗"} ${p.name}${!ok ? ` (max ${mmss(p.max)})` : orient}</span>`;
+  }).join("");
+  return `<div><b>${label}:</b> ${mmss(durationSec)} — ${cls}${vertical === null ? "" : vertical ? " · vertical" : " · landscape"}</div><div class="row-b">${badges}</div>`;
+}
 let BOOT = null, DEFAULTS = null, clips = [], currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
 let editMode = localStorage.getItem("ave.mode") || "auto";
 
@@ -463,6 +498,15 @@ function updateRunButton() {
   }
 }
 byId("ai.review").addEventListener("change", updateRunButton);
+(function buildChips() {
+  const box = byId("target-chips");
+  const targets = [["YouTube Shorts ≤ 3:00", "Keep the final video under 3 minutes (YouTube Shorts)."], ["Instagram Reel ≤ 3:00", "Keep the final video under 3 minutes (Instagram Reel)."], ["Facebook Reel ≤ 1:30", "Keep the final video under 90 seconds (Facebook Reel)."], ["≤ 60 s", "Keep the final video under 60 seconds."], ["Long-form, just clean up", "Keep the full length; only clean up fillers, stumbles and repeats."]];
+  for (const [label, text] of targets) {
+    const b = document.createElement("button"); b.textContent = label;
+    b.onclick = (e) => { e.preventDefault(); const ta = byId("director.instructions"); ta.value = (ta.value.replace(/Keep the (final video|full length)[^\n]*\n?/g, "").trim() + "\n" + text).trim(); updateTags(); };
+    box.appendChild(b);
+  }
+})();
 
 // ─────────────── settings form <-> object ───────────────
 const csv = (s) => s.split(",").map(x => x.trim()).filter(Boolean);
@@ -638,6 +682,7 @@ function renderClips() {
   if (clips.length) {
     const f = clips[0].info, base = (f.win_path || f.file).replace(/\.[^.]+$/, "");
     byId("output").value = base + (clips.length > 1 ? "_combined_edited.mp4" : "_edited.mp4");
+    byId("fit-source").innerHTML = fitHTML(total, f.video && f.video.width, f.video && f.video.height, clips.length > 1 ? "Combined source" : "Source");
   }
   const key = clips.map(c => c.path).join("|");
   if (currentPlan && currentPlan.key !== key) { currentPlan = null; byId("result").innerHTML = ""; }
@@ -748,9 +793,20 @@ function renderResult(j) {
         : `<div class="stat"><b>${r.fillers_removed}</b><span>filler words cut</span></div><div class="stat"><b>${r.restarts_removed}</b><span>failed takes cut</span></div>`}
     </div>
     ${costLine(j.cost)}
+    <div class="fit">${fitHTML(r.duration_edited_sec, clips[0] && clips[0].info.video && clips[0].info.video.width, clips[0] && clips[0].info.video && clips[0].info.video.height, "Edited video")}</div>
     <video controls preload="metadata" src="/api/media?path=${encodeURIComponent(r.output_video)}"></video>
+    ${r.continue_ready ? `<div class="actions"><button class="primary" id="btn-continue">✂ Keep editing this result</button></div>
+      <div class="hint">Loads the edited video as the new source with its transcript carried over — no re-transcription. Then tell the AI what else to cut (e.g. "remove the part about pricing" or "cut 0:42–0:55").</div>` : ""}
     ${r.chapters_text ? `<h3 class="sub">YouTube chapters</h3><pre class="chapters">${esc(r.chapters_text)}</pre><div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(r.chapters_text)});flash(this,'Copied ✓')">Copy chapters</button></div>` : ""}
     <div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(winOut || r.output_video)});flash(this,'Copied ✓')">Copy output path</button></div>`;
+  const cont = byId("btn-continue");
+  if (cont) cont.onclick = async () => {
+    clips = []; currentPlan = null;
+    await addClip(r.output_video, true); renderClips(); if (cwd) browse(cwd.path);
+    setMode("ai"); byId("director.instructions").value = ""; updateTags();
+    byId("result").innerHTML = `<div class="banner info">Now editing <b>${esc(r.output_video.split("/").pop())}</b>. Its transcript is already known, so <b>Ask AI for a plan</b> takes seconds. Describe what to cut in the instructions box.</div>`;
+    byId("director.instructions").focus();
+  };
 }
 
 function renderPlan(j) {

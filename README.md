@@ -85,6 +85,18 @@ the first clip's size/fps) before the Auto or AI edit. Every AI call shows token
 in/out and the dollar cost (prices live from OpenRouter's catalogue; NIM bills in
 credits, so it shows tokens only); History keeps a session total.
 
+### Platform fit & iterative editing
+
+The Clips card and every result show a **platform fit** line — duration class
+(short-form / long-form), whether it fits YouTube Shorts, Instagram Reels,
+Facebook Reels or long-form limits, and an orientation warning where a vertical
+9:16 is expected. Target chips in the AI panel ("Instagram Reel ≤ 3:00") add the
+length constraint to the instructions.
+
+After a render, **✂ Keep editing this result** loads the edited video as the new
+source with its transcript remapped from the original — no re-transcription — so
+"remove the part about pricing" or "cut 0:42–0:55" is one AI call plus a render.
+
 ### Whisper model downloads
 
 The transcription-model dropdown shows which models are already on disk and the

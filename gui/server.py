@@ -293,6 +293,57 @@ def _fmt_mb(b: int) -> str:
     return f"{b / 1e9:.2f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
 
 
+def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cfg: dict) -> bool:
+    """Write an analysis cache for the rendered output by remapping the input's cached
+    transcript/VAD onto the output timeline (kept ranges concatenated in order).
+    Lets the result be re-edited by the AI without running Whisper again."""
+    src = _cache_path_for(input_path)
+    if not src.exists() or not keep or not Path(output_path).exists():
+        return False
+    try:
+        cache = json.loads(src.read_text())
+    except (OSError, ValueError):
+        return False
+    words_all = [w for seg in cache["transcript"] for w in (seg.get("words") or [])]
+    new_words: list[dict] = []
+    new_speech: list[dict] = []
+    offset = 0.0
+    for k in keep:
+        ks, ke = float(k["start"]), float(k["end"])
+        for w in words_all:
+            mid = (w["start"] + w["end"]) / 2
+            if ks <= mid <= ke:
+                new_words.append({**w, "start": round(offset + max(0.0, w["start"] - ks), 3),
+                                  "end": round(offset + min(ke - ks, w["end"] - ks), 3), "_piece": len(new_speech)})
+        for sp in cache["speech_segments"]:
+            a, b = max(ks, sp["start"]), min(ke, sp["end"])
+            if b - a > 0.05:
+                new_speech.append({"start": round(offset + a - ks, 3), "end": round(offset + b - ks, 3)})
+        offset += ke - ks
+    # Rebuild sentence-ish segments: split at piece boundaries or gaps > 1 s, cap ~25 words.
+    segs: list[dict] = []
+    cur: list[dict] = []
+    for w in new_words:
+        if cur and (w["_piece"] != cur[-1]["_piece"] or w["start"] - cur[-1]["end"] > 1.0 or len(cur) >= 25):
+            segs.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        segs.append(cur)
+    transcript = [{"start": ws[0]["start"], "end": ws[-1]["end"],
+                   "text": " ".join(w["word"].strip() for w in ws),
+                   "words": [{k: v for k, v in w.items() if k != "_piece"} for w in ws]} for ws in segs]
+    out = Path(output_path)
+    st = out.stat()
+    data = {"key": {"input": str(out.resolve()), "size": st.st_size, "mtime": int(st.st_mtime),
+                    "whisper_model": cfg["whisper"].get("model"), "language": cfg["whisper"].get("language", "auto")},
+            "speech_segments": new_speech, "transcript": transcript,
+            "detected_language": cache.get("detected_language"), "derived_from": input_path}
+    dest = _cache_path_for(output_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(data))
+    return True
+
+
 def _cache_path_for(input_path: str) -> Path:
     return CACHE_DIR / (hashlib.sha1(str(Path(input_path).resolve()).encode()).hexdigest() + ".json")
 
@@ -685,6 +736,15 @@ def _run_job(job: Job) -> None:
                 job.cost = cost_for(plan.get("provider", ""), plan["usage"])
             elif p.get("carry_cost"):
                 job.cost = {**p["carry_cost"], "carried": True}
+            # Make the output re-editable without re-transcribing (not when a hook was
+            # prepended — that shifts the timeline in a way we don't track).
+            if result.get("status") == "complete" and not result.get("hook_segment"):
+                keep = p.get("keep_segments") or result.get("keep_segments") or []
+                try:
+                    result["continue_ready"] = _derive_output_cache(p["input"], result["output_video"], keep, _build_config(p))
+                except Exception as exc:  # noqa: BLE001
+                    job.log.append(f"[gui] could not derive output cache: {exc}")
+                    result["continue_ready"] = False
             chapters_file = result.get("chapters_file")
             if chapters_file and Path(chapters_file).exists():
                 try:
