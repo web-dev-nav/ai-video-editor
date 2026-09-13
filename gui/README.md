@@ -15,6 +15,13 @@ reorder with ↑/↓. They are joined in that order — normalised to the first 
 resolution and frame rate — and then edited as one video in either mode. The
 combined file is cached under `uploads/.cache/combined/`.
 
+## Whisper models
+
+The transcription model dropdown shows which models are already on this machine
+and the real download size of the others (`small` ≈ 486 MB, `medium` ≈ 1.5 GB,
+`large-v3` ≈ 3.1 GB). Press **Download now** to fetch one with a progress bar,
+or just run — a first-use download shows its progress inside the job.
+
 ## Usage & cost
 
 Every AI plan or render shows the tokens in/out and the cost (input, output,

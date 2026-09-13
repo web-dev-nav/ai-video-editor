@@ -171,6 +171,101 @@ def list_models(provider: str, force: bool = False) -> list[dict]:
     return models
 
 
+# ---------------------------------------------------------------------------
+# Whisper model downloads (faster-whisper pulls from Hugging Face on first use)
+# ---------------------------------------------------------------------------
+
+HF_CACHE = Path(os.environ.get("HF_HUB_CACHE") or os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface") / "hub")
+if os.environ.get("HF_HOME") and not os.environ.get("HF_HUB_CACHE"):
+    HF_CACHE = Path(os.environ["HF_HOME"]) / "hub"
+# Real on-disk sizes of the CTranslate2 int8/fp16 models (the upstream README lists OpenAI's sizes).
+WHISPER_FALLBACK_BYTES = {"tiny": 75_500_000, "base": 145_000_000, "small": 484_000_000, "medium": 1_530_000_000,
+                          "large": 3_090_000_000, "large-v2": 3_090_000_000, "large-v3": 3_090_000_000}
+WHISPER_FILES = ("config.json", "preprocessor_config.json", "model.bin", "tokenizer.json", "vocabulary.txt", "vocabulary.json")
+_WHISPER_SIZE_CACHE: dict[str, int] = {}
+WHISPER_DOWNLOADS: dict[str, dict] = {}   # model -> {"state": downloading|done|error, "error": str}
+
+
+def _whisper_dir(model: str) -> Path:
+    return HF_CACHE / f"models--Systran--faster-whisper-{model}"
+
+
+def whisper_downloaded(model: str) -> bool:
+    snaps = _whisper_dir(model) / "snapshots"
+    if not snaps.is_dir():
+        return False
+    for snap in snaps.iterdir():
+        f = snap / "model.bin"
+        try:
+            if f.exists() and f.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def whisper_local_bytes(model: str) -> int:
+    blobs = _whisper_dir(model) / "blobs"
+    if not blobs.is_dir():
+        return 0
+    total = 0
+    for f in blobs.iterdir():
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def whisper_expected_bytes(model: str) -> int:
+    if model in _WHISPER_SIZE_CACHE:
+        return _WHISPER_SIZE_CACHE[model]
+    size = WHISPER_FALLBACK_BYTES.get(model, 0)
+    try:
+        import httpx
+        r = httpx.get(f"https://huggingface.co/api/models/Systran/faster-whisper-{model}/tree/main", timeout=8)
+        if r.status_code == 200:
+            live = sum(int(f.get("size", 0)) for f in r.json() if f.get("path") in WHISPER_FILES)
+            if live > 0:
+                size = live
+    except Exception:  # noqa: BLE001
+        pass
+    _WHISPER_SIZE_CACHE[model] = size
+    return size
+
+
+def whisper_status(model: str) -> dict:
+    dl = WHISPER_DOWNLOADS.get(model, {})
+    done = whisper_downloaded(model) and dl.get("state") != "downloading"
+    expected = whisper_expected_bytes(model)
+    local = whisper_local_bytes(model)
+    return {
+        "model": model, "downloaded": done, "state": "done" if done else dl.get("state", "idle"),
+        "bytes": local, "total": expected, "pct": (min(100, round(local / expected * 100)) if expected else 0),
+        "error": dl.get("error"),
+    }
+
+
+def start_whisper_download(model: str) -> None:
+    if WHISPER_DOWNLOADS.get(model, {}).get("state") == "downloading":
+        return
+    WHISPER_DOWNLOADS[model] = {"state": "downloading"}
+
+    def _dl():
+        try:
+            from faster_whisper.utils import download_model
+            download_model(model)
+            WHISPER_DOWNLOADS[model] = {"state": "done"}
+        except Exception as exc:  # noqa: BLE001
+            WHISPER_DOWNLOADS[model] = {"state": "error", "error": str(exc)[:300]}
+
+    threading.Thread(target=_dl, daemon=True).start()
+
+
+def _fmt_mb(b: int) -> str:
+    return f"{b / 1e9:.2f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
+
+
 def _cache_path_for(input_path: str) -> Path:
     return CACHE_DIR / (hashlib.sha1(str(Path(input_path).resolve()).encode()).hexdigest() + ".json")
 
@@ -472,6 +567,23 @@ def _run_job(job: Job) -> None:
         return
 
     stdout_chunks: list[str] = []
+    whisper_model = _build_config(p)["whisper"]["model"]
+    dl_stop = threading.Event()
+
+    def watch_download():
+        """Emit download/load progress while faster-whisper fetches the model."""
+        seen_bytes = -1
+        while not dl_stop.wait(1.0):
+            st = whisper_status(whisper_model)
+            if st["downloaded"]:
+                job._event("analysis", "whisper", 0.19,
+                           f"Whisper {whisper_model} model downloaded — loading into memory (can take a minute)…")
+                return
+            if st["bytes"] != seen_bytes:
+                seen_bytes = st["bytes"]
+                job._event("analysis", "whisper", 0.19 * st["pct"] / 100,
+                           f"Downloading Whisper {whisper_model} model (first use): {st['pct']}% · "
+                           f"{_fmt_mb(st['bytes'])} / {_fmt_mb(st['total'])}")
 
     def read_stdout():
         assert job.proc and job.proc.stdout
@@ -494,6 +606,11 @@ def _run_job(job: Job) -> None:
                     job.log.append(line)
                     continue
                 ev["t"] = round(time.time() - job.started, 1)
+                if ev.get("step") == "whisper":
+                    if ev.get("progress", 0) == 0.0 and not whisper_downloaded(whisper_model) and not dl_stop.is_set():
+                        threading.Thread(target=watch_download, daemon=True).start()
+                    elif ev.get("progress", 0) > 0:
+                        dl_stop.set()
                 job.events.append(ev)
                 val = _phase_progress(ev.get("phase", ""), ev.get("step", ""), float(ev.get("progress", 0)),
                                       0.0 if multi else job.overall)
@@ -503,6 +620,7 @@ def _run_job(job: Job) -> None:
                 job.log.append(line)
 
     job.proc.wait()
+    dl_stop.set()
     t.join(timeout=5)
     job.finished = time.time()
 
@@ -617,6 +735,26 @@ async def api_save_key(request: Request):
         os.environ.pop(env_name, None)
     keys = _keys_present()
     return JSONResponse({"ok": True, "keys": keys, "api_key_present": keys["openrouter"]})
+
+
+async def api_whisper_models(request: Request):
+    return JSONResponse({"models": [whisper_status(m) for m in WHISPER_MODELS], "cache_dir": str(HF_CACHE)})
+
+
+async def api_whisper_download(request: Request):
+    model = request.query_params.get("model", "")
+    if model not in WHISPER_MODELS:
+        return JSONResponse({"error": "unknown model"}, status_code=400)
+    if not whisper_downloaded(model):
+        start_whisper_download(model)
+    return JSONResponse(whisper_status(model))
+
+
+async def api_whisper_status(request: Request):
+    model = request.query_params.get("model", "")
+    if model not in WHISPER_MODELS:
+        return JSONResponse({"error": "unknown model"}, status_code=400)
+    return JSONResponse(whisper_status(model))
 
 
 async def api_models(request: Request):
@@ -816,6 +954,9 @@ routes = [
     Route("/api/bootstrap", api_bootstrap),
     Route("/api/key", api_save_key, methods=["POST"]),
     Route("/api/models", api_models),
+    Route("/api/whisper/models", api_whisper_models),
+    Route("/api/whisper/download", api_whisper_download, methods=["POST"]),
+    Route("/api/whisper/status", api_whisper_status),
     Route("/api/browse", api_browse),
     Route("/api/info", api_info),
     Route("/api/upload", api_upload, methods=["PUT"]),

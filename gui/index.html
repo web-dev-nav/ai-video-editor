@@ -280,6 +280,10 @@
               <select id="language"><option value="auto">Auto-detect</option><option value="en">English</option><option value="hi">Hindi (हिन्दी)</option><option value="ru">Russian</option></select></label>
           </div>
           <div class="hint" id="model-hint"></div>
+          <div id="whisper-dl" class="cost" style="margin:0 0 10px" hidden>
+            <div style="display:flex;align-items:center;gap:10px"><span id="whisper-dl-text" style="flex:1"></span><button class="small" id="btn-whisper-dl">⬇ Download now</button></div>
+            <div class="progress" id="whisper-dl-bar" style="margin:8px 0 0" hidden><div></div></div>
+          </div>
           <label class="field"><span>Output file</span><input type="text" id="output" placeholder="auto: {name}_edited.mp4 next to the input"></label>
           <details>
             <summary>Audio enhancement <span class="tag" id="tag-audio"></span></summary>
@@ -401,11 +405,30 @@ const fmtSec = (s) => { s = Math.round(s); const m = Math.floor(s / 60); return 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const toWin = (p) => { const m = p && p.match(/^\/mnt\/([a-z])\/(.*)$/); return m ? `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, "\\")}` : null; };
 const MODEL_NOTES = {
-  tiny: "~39 MB · ~32× realtime · basic accuracy", base: "~74 MB · ~16× realtime · decent",
-  small: "~244 MB · ~6× realtime · good — recommended starting point", medium: "~769 MB · ~2× realtime · great",
-  large: "~1.5 GB · ~1× realtime · excellent", "large-v2": "~1.5 GB · ~1× realtime · improved large",
-  "large-v3": "~1.5 GB · ~1× realtime · best accuracy (slowest on CPU)",
+  tiny: "~32× realtime · basic accuracy", base: "~16× realtime · decent",
+  small: "~6× realtime · good — recommended starting point", medium: "~2× realtime · great",
+  large: "~1× realtime · excellent", "large-v2": "~1× realtime · improved large",
+  "large-v3": "~1× realtime · best accuracy (slowest on CPU)",
 };
+const fmtMB = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`;
+let WHISPER = {};   // model -> status
+async function refreshWhisper() {
+  try { const d = await api("/api/whisper/models"); for (const m of d.models) WHISPER[m.model] = m; } catch {}
+  const sel = byId("whisper_model"), cur = sel.value;
+  sel.innerHTML = BOOT.models.map(m => { const w = WHISPER[m]; const tag = !w ? "" : w.downloaded ? ` — ${fmtMB(w.total)} ✓ ready` : w.state === "downloading" ? ` — downloading ${w.pct}%` : ` — ${fmtMB(w.total)} download on first use`; return `<option value="${m}">${m}${tag}</option>`; }).join("");
+  sel.value = cur || sel.value; updateWhisperBox();
+}
+let whisperPoll = null;
+function updateWhisperBox() {
+  const m = byId("whisper_model").value, w = WHISPER[m], box = byId("whisper-dl"), txt = byId("whisper-dl-text"), bar = byId("whisper-dl-bar"), btn = byId("btn-whisper-dl");
+  if (!w) { box.hidden = true; return; }
+  box.hidden = false; bar.hidden = true; btn.hidden = false;
+  if (w.downloaded) { txt.innerHTML = `✓ <b>${m}</b> is on this machine (${fmtMB(w.total)}). First load into memory can still take up to a minute.`; btn.hidden = true; }
+  else if (w.state === "downloading") { txt.innerHTML = `⬇ Downloading <b>${m}</b>: ${w.pct}% · ${fmtMB(w.bytes)} / ${fmtMB(w.total)}`; bar.hidden = false; bar.querySelector("div").style.width = w.pct + "%"; btn.hidden = true; }
+  else if (w.state === "error") { txt.innerHTML = `Download failed: ${esc(w.error || "")}`; }
+  else { txt.innerHTML = `<b>${m}</b> is not downloaded yet (${fmtMB(w.total)}). It downloads automatically on first use — or download it now so the first job isn't slow.`; }
+  if (w.state === "downloading" && !whisperPoll) whisperPoll = setInterval(async () => { const st = await api(`/api/whisper/status?model=${m}`); WHISPER[m] = st; updateWhisperBox(); if (st.state !== "downloading") { clearInterval(whisperPoll); whisperPoll = null; refreshWhisper(); } }, 1000);
+}
 const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter" };
 
 let BOOT = null, DEFAULTS = null, clips = [], currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
@@ -502,6 +525,8 @@ function updateTags() {
   byId("ai-hint").textContent = BOOT.api_key_present ? "OpenRouter key found — these call OpenRouter (fractions of a cent per video)." : "These need an OpenRouter key with credit; otherwise they are skipped.";
   byId("ai-hint").style.color = needKey ? "var(--warn)" : "";
 }
+byId("whisper_model").addEventListener("change", updateWhisperBox);
+byId("btn-whisper-dl").onclick = async () => { const m = byId("whisper_model").value; WHISPER[m] = await api(`/api/whisper/download?model=${m}`, { method: "POST" }); updateWhisperBox(); };
 byId("col-settings").addEventListener("input", updateTags);
 byId("col-settings").addEventListener("change", updateTags);
 byId("lut-select").addEventListener("change", () => { if (byId("lut-select").value) byId("lut").value = ""; updateTags(); });
@@ -690,7 +715,7 @@ async function poll() {
   if (["done", "error", "cancelled"].includes(j.status)) {
     clearInterval(pollTimer); pollTimer = null;
     byId("progress").classList.add(j.status === "done" ? "done" : "error");
-    renderResult(j); refreshJobs();
+    renderResult(j); refreshJobs(); refreshWhisper();
   }
 }
 
@@ -818,6 +843,7 @@ function setKeyPill() {
   browse(localStorage.getItem("ave.cwd") || (BOOT.roots[0] && BOOT.roots[0].path));
   refreshJobs();
   loadModels();
+  refreshWhisper();
 })();
 </script>
 </body>
