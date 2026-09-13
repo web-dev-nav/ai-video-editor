@@ -27,8 +27,8 @@ from starlette.routing import Route
 
 REPO = Path(__file__).resolve().parent.parent
 GUI_DIR = Path(__file__).resolve().parent
-VENV_BIN = REPO / ".venv" / "bin"
-CLI = VENV_BIN / "ai-video-editor"
+VENV_BIN = REPO / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+CLI = VENV_BIN / ("ai-video-editor.exe" if os.name == "nt" else "ai-video-editor")
 UPLOADS = REPO / "uploads"
 JOBS_DIR = REPO / "uploads" / ".jobs"
 CACHE_DIR = REPO / "uploads" / ".cache"
@@ -291,16 +291,24 @@ def wsl_to_win(p: str) -> str | None:
 
 
 def quick_roots() -> list[dict]:
+    """Shortcut folders: Windows user folders under WSL, else the current user's folders."""
     roots = []
-    for base in sorted(Path("/mnt/c/Users").glob("*")) if Path("/mnt/c/Users").exists() else []:
-        if base.name in {"Public", "Default", "Default User", "All Users"} or not base.is_dir():
-            continue
-        for sub in ("Downloads", "Videos", "Desktop", "Documents"):
-            d = base / sub
-            if d.is_dir():
-                roots.append({"label": f"{sub} (Windows)", "path": str(d)})
+    subs = ("Downloads", "Videos", "Desktop", "Documents", "Movies")
+    win_users = Path("/mnt/c/Users")
+    if win_users.exists():  # WSL — offer the Windows profile folders
+        for base in sorted(win_users.glob("*")):
+            if base.name in {"Public", "Default", "Default User", "All Users"} or not base.is_dir():
+                continue
+            for sub in subs:
+                d = base / sub
+                if d.is_dir():
+                    roots.append({"label": f"{sub} (Windows)", "path": str(d)})
+    for sub in subs:
+        d = Path.home() / sub
+        if d.is_dir() and not any(r["path"] == str(d) for r in roots):
+            roots.append({"label": sub, "path": str(d)})
     roots.append({"label": "Uploads (drag & drop)", "path": str(UPLOADS)})
-    roots.append({"label": "Home (WSL)", "path": str(Path.home())})
+    roots.append({"label": "Home", "path": str(Path.home())})
     return roots
 
 
@@ -441,7 +449,7 @@ def _combined_path(inputs: list[str]) -> Path:
 
 
 def _probe(path: str) -> dict:
-    out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+    out = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
                          capture_output=True, text=True).stdout
     return json.loads(out or "{}")
 
@@ -463,7 +471,7 @@ def _combine_clips(job: "Job", inputs: list[str], dest: Path) -> None:
     fps = round(int(num) / max(1, int(den)), 3) or 30
 
     n = len(inputs)
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"]
+    cmd = [shutil.which("ffmpeg") or "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"]
     for p in inputs:
         cmd += ["-i", p]
     parts = []
@@ -983,9 +991,19 @@ def main() -> None:
 
 
 def _open_browser(url: str) -> None:
-    # On WSL, hand the URL to Windows; elsewhere use the default browser.
-    for cmd in (["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{url}'"],
-                ["explorer.exe", url], ["xdg-open", url]):
+    """Open the default browser: Windows (native or from WSL), macOS, or Linux desktop."""
+    if os.name == "nt":
+        try:
+            os.startfile(url)  # type: ignore[attr-defined]
+            return
+        except OSError:
+            pass
+    is_wsl = "microsoft" in Path("/proc/version").read_text().lower() if Path("/proc/version").exists() else False
+    cmds = []
+    if is_wsl:
+        cmds += [["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{url}'"], ["explorer.exe", url]]
+    cmds += [["open", url], ["xdg-open", url]]
+    for cmd in cmds:
         if shutil.which(cmd[0]):
             try:
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

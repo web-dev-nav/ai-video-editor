@@ -70,19 +70,102 @@ in/out and the dollar cost; History keeps a session total.
 
 ## Requirements
 
-- Python 3.11+
-- FFmpeg 7+ (`brew install ffmpeg`)
-- macOS with Apple Silicon (for VideoToolbox hardware encoding; falls back to libx264 elsewhere)
-- ~4 GB RAM for Whisper `large-v3` (use `--whisper-model small` for lighter machines)
+| | |
+|---|---|
+| **OS** | Linux, **WSL2** on Windows (recommended), macOS, or native Windows |
+| **Python** | 3.11 – 3.13 — the installer provisions **3.12** for you via `uv`; nothing to install by hand |
+| **FFmpeg** | 6 or newer, on your `PATH` (see below) |
+| **RAM** | 4 GB for the `small` Whisper model, 8 GB+ for `large-v3` |
+| **GPU** | Optional. CPU works fine; an NVIDIA GPU is auto-detected and used if present |
+| **Disk** | ~1.5 GB for the app (CPU build) + Whisper models you choose (78 MB – 3 GB each, downloaded on first use) |
+
+Install FFmpeg first:
+
+```bash
+# Ubuntu / Debian / WSL2
+sudo apt-get update && sudo apt-get install -y ffmpeg
+# macOS
+brew install ffmpeg
+# Windows (native)
+winget install Gyan.FFmpeg      # then open a new terminal
+```
 
 ## Installation
 
+### Linux · WSL2 · macOS
+
 ```bash
-cd Tools/ai-video-editor
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+git clone https://github.com/web-dev-nav/ai-video-editor.git
+cd ai-video-editor
+./install.sh
 ```
+
+### Windows (native PowerShell)
+
+```powershell
+git clone https://github.com/web-dev-nav/ai-video-editor.git
+cd ai-video-editor
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+The installer is idempotent (re-run it any time) and takes care of the things
+that usually go wrong on a fresh machine:
+
+- installs [`uv`](https://docs.astral.sh/uv/) and a private **Python 3.12** — your
+  system Python is never touched (and Python 3.14 is refused, because PyTorch
+  and faster-whisper have no wheels for it yet)
+- installs the **CPU build of PyTorch (~200 MB)** unless an NVIDIA GPU is
+  detected — a plain `pip install torch` on Linux silently pulls a 5 GB CUDA
+  build that is useless without a GPU (`FORCE_TORCH=cpu|cuda ./install.sh` overrides)
+- pins the dependencies this fork needs (`torchaudio` for Silero VAD, `mcp<2`
+  for the MCP server, `anthropic`, `openai`, `starlette`, `uvicorn`)
+- verifies every import, checks `ffmpeg`, and creates `.env` from `.env.example`
+
+### Start
+
+```bash
+./gui/run.sh            # Linux / WSL2 / macOS  → opens http://localhost:8765
+.\gui\run.ps1           # Windows
+```
+
+The run scripts call the installer automatically if `.venv` is missing, so on a
+new machine `git clone` + `./gui/run.sh` is enough.
+
+Add API keys (only needed for the AI editor / hook / chapters) either in the
+GUI via **API keys**, or in `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...     # Claude
+OPENAI_API_KEY=sk-...            # ChatGPT
+OPENROUTER_API_KEY=sk-or-...     # OpenRouter (also used by hook/chapters)
+```
+
+### CLI only
+
+```bash
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+ai-video-editor process video.mp4 --whisper-model small --no-hook --no-chapters
+ai-video-editor info video.mp4
+ai-video-editor models
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `ffmpeg: command not found` / "ffmpeg missing!" in the GUI header | Install FFmpeg (above) and open a new terminal |
+| `No module named 'torchaudio'` | `./install.sh` again — it installs torchaudio next to torch |
+| `No module named 'mcp.server.fastmcp'` | You have `mcp` 2.x; `./install.sh` pins `mcp<2` |
+| `.venv` is 5 GB / install downloads NVIDIA packages | You got the CUDA torch build. `rm -rf .venv && FORCE_TORCH=cpu ./install.sh` |
+| "Loading Whisper model…" for a long time | It is downloading the model (up to 3 GB). The GUI shows the progress; use **Download now** under the model dropdown to pre-fetch |
+| Browser doesn't open from WSL | Open http://localhost:8765 yourself; the server binds to 127.0.0.1 |
+| Windows paths | Paste `C:\Users\you\Videos\x.mp4` anywhere a path is accepted — they are converted for WSL automatically |
+| Python 3.14 error | Expected: use the installer's Python 3.12 (`uv python install 3.12` if you want it manually) |
+
+### Tested with
+
+Ubuntu 24.04 on WSL2 · Python 3.12 · ffmpeg 8.0 · torch 2.14 (CPU) · faster-whisper 1.x ·
+anthropic 1.5 · openai 3.x · mcp 1.x · 6-core CPU / 15 GB RAM, no GPU.
 
 ## Quick Start
 
