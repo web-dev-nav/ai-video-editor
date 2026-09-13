@@ -54,7 +54,8 @@ STEP_RANGES = {
     ("assembly", "color_grade"): (66, 68),
     ("ai", "smart_hook"): (68, 74),
     ("ai", "chapters"): (74, 78),
-    ("encode", "encode"): (78, 100),
+    ("encode", "encode"): (78, 96),
+    ("finish", "format"): (96, 99),
 }
 
 
@@ -293,6 +294,151 @@ def _fmt_mb(b: int) -> str:
     return f"{b / 1e9:.2f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
 
 
+FORMATS = {
+    "source": None,
+    "vertical-crop": {"w": 1080, "h": 1920},
+    "vertical-blur": {"w": 1080, "h": 1920},
+    "square": {"w": 1080, "h": 1080},
+}
+
+
+def _video_dims(path: str) -> tuple[int, int]:
+    info = _probe(path)
+    v = next((st for st in info.get("streams", []) if st.get("codec_type") == "video"), {})
+    return int(v.get("width", 0) or 0), int(v.get("height", 0) or 0)
+
+
+def _convert_format(job: "Job", path: str, kind: str, focus: str = "center") -> None:
+    """Re-frame the rendered video in place: vertical 9:16 (crop or blurred fit) or square."""
+    spec = FORMATS.get(kind)
+    if not spec:
+        return
+    w, h = _video_dims(path)
+    if not w or not h:
+        raise RuntimeError("cannot read output dimensions")
+    tw, th = spec["w"], spec["h"]
+    fx = {"left": "0", "center": "(iw-ow)/2", "right": "iw-ow"}.get(focus, "(iw-ow)/2")
+    if kind == "vertical-blur":
+        vf = (f"split[bg][fg];[bg]scale={tw}:{th}:force_original_aspect_ratio=increase,crop={tw}:{th},"
+              f"boxblur=luma_radius=30:luma_power=2[bg];[fg]scale={tw}:{th}:force_original_aspect_ratio=decrease[fg];"
+              f"[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p")
+    else:
+        # crop to the target aspect (keeping full height for landscape sources), then scale
+        if w / h > tw / th:
+            crop = f"crop=ih*{tw}/{th}:ih:{fx}:0"
+        else:
+            crop = f"crop=iw:iw*{th}/{tw}:0:(ih-oh)/2"
+        vf = f"{crop},scale={tw}:{th},setsar=1,format=yuv420p"
+    dur = float(_probe(path).get("format", {}).get("duration", 0) or 0)
+    tmp = str(Path(path).with_name(Path(path).stem + ".__fmt__.mp4"))
+    cmd = [shutil.which("ffmpeg") or "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
+           "-i", path, "-filter_complex" if kind == "vertical-blur" else "-vf", vf,
+           "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", tmp]
+    label = {"vertical-crop": "vertical 9:16", "vertical-blur": "vertical 9:16 (blurred background)", "square": "square 1:1"}[kind]
+    job.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert job.proc.stdout
+    for line in job.proc.stdout:
+        if line.startswith("out_time_us=") and dur > 0:
+            try:
+                frac = min(1.0, int(line.split("=")[1]) / 1e6 / dur)
+            except ValueError:
+                continue
+            job._event("finish", "format", frac, f"Converting to {label}… {int(frac * 100)}%")
+    job.proc.wait()
+    err = job.proc.stderr.read() if job.proc.stderr else ""
+    if job.proc.returncode != 0:
+        Path(tmp).unlink(missing_ok=True)
+        raise RuntimeError(f"format conversion failed: {err.strip()[-300:]}")
+    os.replace(tmp, path)
+    job._event("finish", "format", 1.0, f"Converted to {label}.")
+
+
+def _mmss(t: float) -> str:
+    t = int(round(t))
+    return f"{t // 60}:{t % 60:02d}"
+
+
+def _transcript_text(cache_file: Path) -> str | None:
+    try:
+        data = json.loads(cache_file.read_text())
+    except (OSError, ValueError):
+        return None
+    return "\n".join(f"[{_mmss(t['start'])}] {t.get('text', '').strip()}" for t in data.get("transcript", [])) + "\n"
+
+
+def _bundle_output(job: "Job", p: dict, result: dict) -> None:
+    """Move the rendered video into its own folder with transcript, plan and notes."""
+    video = Path(result["output_video"])
+    folder = video.with_suffix("")
+    if folder.exists() and not folder.is_dir():
+        folder = video.with_name(video.stem + "_bundle")
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / video.name
+    if dest.exists():
+        dest = folder / f"{video.stem}_{time.strftime('%H%M%S')}{video.suffix}"
+    shutil.move(str(video), str(dest))
+    result["output_video"] = str(dest)
+    result["output_folder"] = str(folder)
+    files = [dest.name]
+
+    plan = result.get("director_plan") or p.get("carry_plan")
+    if plan and not result.get("director_plan"):
+        result["director_plan"] = plan  # reviewed plan rendered from the GUI
+    inputs = p.get("inputs") or [p["input"]]
+    opts = p.get("options", {})
+    (folder / "edit_plan.json").write_text(json.dumps({
+        "inputs": inputs, "output": str(dest), "mode": "ai" if plan else "auto",
+        "skill": plan and plan.get("skill"), "model": plan and plan.get("model"), "instructions": plan and plan.get("instructions"),
+        "keep_segments": p.get("keep_segments") or result.get("keep_segments"),
+        "director_plan": plan, "cost": job.cost, "stats": {k: result.get(k) for k in (
+            "duration_original_sec", "duration_edited_sec", "fillers_removed", "restarts_removed", "silence_removed_sec")},
+        "output_format": opts.get("output_format"), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }, indent=2, ensure_ascii=False))
+    files.append("edit_plan.json")
+
+    lines = [f"# Edit notes — {dest.name}", "",
+             f"- Created: {time.strftime('%Y-%m-%d %H:%M')}",
+             f"- Source: " + ", ".join(Path(x).name for x in inputs),
+             f"- Duration: {_mmss(result.get('duration_original_sec', 0))} → {_mmss(result.get('duration_edited_sec', 0))}",
+             f"- Output format: {(opts.get('output_format') or {}).get('kind', 'source')}"
+             + (f" ({result['output_width']}×{result['output_height']})" if result.get("output_width") else ""), ""]
+    if plan:
+        lines += [f"## AI editor — {plan.get('skill_name') or 'Clean-up'} · {plan.get('model')}", "",
+                  plan.get("summary", ""), ""]
+        if plan.get("instructions"):
+            lines += ["**Instructions:** " + plan["instructions"], ""]
+        lines += ["### Cuts", ""]
+        for r in plan.get("removed", []):
+            lines.append(f"- {_mmss(r['start'])}–{_mmss(r['end'])} — {r.get('reason', '')}  \n  _{r.get('text', '')}_")
+        lines += ["", "### Kept", ""]
+        for k in plan.get("keep", []):
+            lines.append(f"- {_mmss(k['start'])}–{_mmss(k['end'])}" + (f" — {k['note']}" if k.get("note") else "") + f"  \n  _{k.get('text', '')}_")
+        if job.cost:
+            c = job.cost
+            lines += ["", f"### Cost", "", f"{c.get('model')}: {c.get('input_tokens', 0):,} tokens in, {c.get('output_tokens', 0):,} out"
+                      + (f" — ${c.get('cost_total', 0):.4f}" if c.get("cost_total") is not None else "")]
+    else:
+        lines += ["## Auto edit (rule-based)", "",
+                  f"- Filler words removed: {result.get('fillers_removed', 0)}",
+                  f"- Failed takes removed: {result.get('restarts_removed', 0)}",
+                  f"- Silence removed: {result.get('silence_removed_sec', 0)} s"]
+    (folder / "edit_notes.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    files.append("edit_notes.md")
+
+    src_cache = _cache_path_for(p["input"])
+    if src_cache.exists():
+        txt = _transcript_text(src_cache)
+        if txt:
+            (folder / "transcript_original.txt").write_text(txt, encoding="utf-8")
+            files.append("transcript_original.txt")
+    ch = result.get("chapters_file")
+    if ch and Path(ch).exists():
+        shutil.move(ch, str(folder / Path(ch).name))
+        result["chapters_file"] = str(folder / Path(ch).name)
+        files.append(Path(ch).name)
+    result["bundle_files"] = files
+
+
 def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cfg: dict) -> bool:
     """Write an analysis cache for the rendered output by remapping the input's cached
     transcript/VAD onto the output timeline (kept ranges concatenated in order).
@@ -410,7 +556,8 @@ class Job:
         self.proc: subprocess.Popen | None = None
         self.config_file: Path | None = None
         self.cost: dict | None = None
-        self.lock = threading.Lock()
+        self.error_kind: str | None = None
+        self.lock = threading.RLock()  # re-entrant: _event() is called from code that may hold it
 
     def _event(self, phase: str, step: str, progress: float, message: str) -> None:
         """Record a GUI-generated progress event (same shape as the CLI's)."""
@@ -431,6 +578,7 @@ class Job:
                 "inputs": self.params.get("inputs") or [self.params["input"]],
                 "output": self.params["output"],
                 "cost": self.cost,
+                "error_kind": self.error_kind,
                 "overall": round(self.overall, 1),
                 "events": self.events[since:],
                 "event_count": len(self.events),
@@ -709,7 +857,6 @@ def _run_job(job: Job) -> None:
     job.proc.wait()
     dl_stop.set()
     t.join(timeout=5)
-    job.finished = time.time()
 
     out = "".join(stdout_chunks).strip()
     result = None
@@ -725,27 +872,58 @@ def _run_job(job: Job) -> None:
                 except json.JSONDecodeError:
                     result = None
 
+    if job.status == "cancelled":
+        return
+    ok = job.proc.returncode == 0 and result and result.get("status") in ("complete", "plan")
+    if ok and result.get("status") == "complete":
+        # Post-processing runs outside the lock: it emits progress events and can take a while.
+        opts = p.get("options", {})
+        fmt = (opts.get("output_format") or {})
+        try:
+            if fmt.get("kind") and fmt["kind"] != "source":
+                _convert_format(job, result["output_video"], fmt["kind"], fmt.get("focus", "center"))
+        except Exception as exc:  # noqa: BLE001
+            job.log.append(f"[gui] format conversion failed: {exc}")
+            result["format_error"] = str(exc)
+        try:
+            result["output_width"], result["output_height"] = _video_dims(result["output_video"])
+        except Exception:  # noqa: BLE001
+            pass
+        plan = result.get("director_plan")
+        job.cost = cost_for(plan.get("provider", ""), plan["usage"]) if plan and plan.get("usage") else (
+            {**p["carry_cost"], "carried": True} if p.get("carry_cost") else None)
+        if opts.get("bundle", True):
+            try:
+                _bundle_output(job, p, result)
+            except Exception as exc:  # noqa: BLE001
+                job.log.append(f"[gui] bundle failed: {exc}")
+        # Make the output re-editable without re-transcribing (not when a hook was
+        # prepended — that shifts the timeline in a way we don't track).
+        if not result.get("hook_segment"):
+            keep = p.get("keep_segments") or result.get("keep_segments") or []
+            try:
+                result["continue_ready"] = _derive_output_cache(p["input"], result["output_video"], keep, _build_config(p))
+                if result["continue_ready"] and result.get("output_folder"):
+                    txt = _transcript_text(_cache_path_for(result["output_video"]))
+                    if txt:
+                        Path(result["output_folder"], "transcript.txt").write_text(txt, encoding="utf-8")
+                        result.setdefault("bundle_files", []).insert(1, "transcript.txt")
+            except Exception as exc:  # noqa: BLE001
+                job.log.append(f"[gui] could not derive output cache: {exc}")
+                result["continue_ready"] = False
+
     with job.lock:
         if job.status == "cancelled":
             return
-        if job.proc.returncode == 0 and result and result.get("status") in ("complete", "plan"):
+        if ok:
             job.status = "done"
             job.result = result
             job.overall = 100.0
             plan = result.get("plan") or result.get("director_plan")
             if plan and plan.get("usage"):
                 job.cost = cost_for(plan.get("provider", ""), plan["usage"])
-            elif p.get("carry_cost"):
+            elif job.cost is None and p.get("carry_cost"):
                 job.cost = {**p["carry_cost"], "carried": True}
-            # Make the output re-editable without re-transcribing (not when a hook was
-            # prepended — that shifts the timeline in a way we don't track).
-            if result.get("status") == "complete" and not result.get("hook_segment"):
-                keep = p.get("keep_segments") or result.get("keep_segments") or []
-                try:
-                    result["continue_ready"] = _derive_output_cache(p["input"], result["output_video"], keep, _build_config(p))
-                except Exception as exc:  # noqa: BLE001
-                    job.log.append(f"[gui] could not derive output cache: {exc}")
-                    result["continue_ready"] = False
             chapters_file = result.get("chapters_file")
             if chapters_file and Path(chapters_file).exists():
                 try:
@@ -758,7 +936,10 @@ def _run_job(job: Job) -> None:
                 job.error = result["error"].get("message") or str(result["error"])
             else:
                 job.error = f"CLI exited with code {job.proc.returncode}"
+            m = re.search(r"\[(quota|rate_limit|auth|model|refusal)\]", job.error or "")
+            job.error_kind = m.group(1) if m else None
             job.result = result
+    job.finished = time.time()
 
 
 def _worker() -> None:
@@ -831,6 +1012,25 @@ async def api_save_key(request: Request):
         os.environ.pop(env_name, None)
     keys = _keys_present()
     return JSONResponse({"ok": True, "keys": keys, "api_key_present": keys["openrouter"]})
+
+
+async def api_quota(request: Request):
+    """Live balance where a provider exposes one (OpenRouter). Others: not available."""
+    out: dict = {}
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if key:
+        try:
+            import httpx
+            r = httpx.get("https://openrouter.ai/api/v1/credits", headers={"Authorization": f"Bearer {key}"}, timeout=8)
+            if r.status_code == 200:
+                d = r.json().get("data", {})
+                total, used = float(d.get("total_credits", 0)), float(d.get("total_usage", 0))
+                out["openrouter"] = {"remaining": round(total - used, 4), "total": total, "used": used}
+            else:
+                out["openrouter"] = {"error": f"HTTP {r.status_code}"}
+        except Exception as exc:  # noqa: BLE001
+            out["openrouter"] = {"error": str(exc)[:120]}
+    return JSONResponse(out)
 
 
 async def api_skills(request: Request):
@@ -975,7 +1175,7 @@ async def api_jobs_create(request: Request):
         if not keep_segments:
             return JSONResponse({"error": "Nothing selected to keep."}, status_code=400)
     job = Job({"input": first, "inputs": inputs, "output": out, "options": options, "mode": mode,
-               "keep_segments": keep_segments, "carry_cost": body.get("carry_cost")})
+               "keep_segments": keep_segments, "carry_cost": body.get("carry_cost"), "carry_plan": body.get("carry_plan")})
     JOBS[job.id] = job
     with QUEUE_CV:
         QUEUE.append(job)
@@ -1060,6 +1260,7 @@ routes = [
     Route("/api/key", api_save_key, methods=["POST"]),
     Route("/api/models", api_models),
     Route("/api/skills", api_skills),
+    Route("/api/quota", api_quota),
     Route("/api/whisper/models", api_whisper_models),
     Route("/api/whisper/download", api_whisper_download, methods=["POST"]),
     Route("/api/whisper/status", api_whisper_status),

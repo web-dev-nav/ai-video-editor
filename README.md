@@ -117,6 +117,20 @@ After a render, **✂ Keep editing this result** loads the edited video as the n
 source with its transcript remapped from the original — no re-transcription — so
 "remove the part about pricing" or "cut 0:42–0:55" is one AI call plus a render.
 
+### Output bundle, short-form format, limit alerts
+
+- Every render lands in **its own folder** next to the source: the video,
+  `transcript.txt` (edited timeline), `transcript_original.txt`, `edit_plan.json`
+  and a readable `edit_notes.md` (every cut with its reason, cost). Toggle in
+  Shared settings → Output.
+- **Output format**: keep source, **vertical 9:16** (crop, with a crop-focus
+  setting, or fit over a blurred background) or square. Picking a Shorts/Reel
+  target chip switches to vertical automatically; the platform-fit line reflects
+  the real output size.
+- **Limit alerts**: provider errors are classified — credits/quota exhausted,
+  rate-limited, bad key, retired model — and shown as a banner with what to do.
+  OpenRouter's live balance is shown in the header and warns when it runs low.
+
 ### Whisper model downloads
 
 The transcription-model dropdown shows which models are already on disk and the

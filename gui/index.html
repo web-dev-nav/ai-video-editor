@@ -95,6 +95,14 @@
   .badge-no { color: var(--err); border-color: rgba(255,92,92,.4); background: rgba(255,92,92,.08); }
   .badge-warn { color: var(--warn); border-color: rgba(245,176,67,.4); background: rgba(245,176,67,.08); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  #alert { display: flex; gap: 12px; align-items: flex-start; padding: 10px 20px; font-size: 13px; line-height: 1.45; border-bottom: 1px solid; }
+  #alert.quota, #alert.auth { background: rgba(255,92,92,.14); border-color: rgba(255,92,92,.45); color: #ffc4c4; }
+  #alert.rate_limit, #alert.low { background: rgba(245,176,67,.14); border-color: rgba(245,176,67,.45); color: #ffe1a8; }
+  #alert.model, #alert.other, #alert.refusal { background: rgba(91,140,255,.12); border-color: rgba(91,140,255,.4); color: #cdd9ff; }
+  #alert b { font-weight: 700; }
+  #alert .x { margin-left: auto; background: none; border: none; color: inherit; font-size: 16px; padding: 0 4px; }
+  .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .files span { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, Menlo, Consolas, monospace; }
   .chips button { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; }
   .kv div:nth-child(odd) { color: var(--muted); }
   .path { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
@@ -172,6 +180,8 @@
   <div class="spacer"></div>
   <span class="pill" id="repo-pill"></span>
 </header>
+
+<div id="alert" hidden><span id="alert-text"></span><button class="x" id="alert-close" title="Dismiss">✕</button></div>
 
 <main>
   <!-- ───────────── Column 1: Source ───────────── -->
@@ -302,7 +312,20 @@
             <div style="display:flex;align-items:center;gap:10px"><span id="whisper-dl-text" style="flex:1"></span><button class="small" id="btn-whisper-dl">⬇ Download now</button></div>
             <div class="progress" id="whisper-dl-bar" style="margin:8px 0 0" hidden><div></div></div>
           </div>
-          <label class="field"><span>Output file</span><input type="text" id="output" placeholder="auto: {name}_edited.mp4 next to the input"></label>
+          <label class="field"><span>Output video</span><input type="text" id="output" placeholder="auto: {name}_edited.mp4 next to the input"></label>
+          <label class="switch"><input type="checkbox" id="bundle" checked> Save into its own folder with <code>transcript.txt</code>, <code>edit_notes.md</code>, <code>edit_plan.json</code></label>
+          <div class="row">
+            <label class="field"><span>Output format</span>
+              <select id="output_format">
+                <option value="source">Keep source size</option>
+                <option value="vertical-crop">Vertical 9:16 — crop (Shorts / Reels)</option>
+                <option value="vertical-blur">Vertical 9:16 — fit with blurred background</option>
+                <option value="square">Square 1:1</option>
+              </select></label>
+            <label class="field" id="focus-field"><span>Crop focus (where the speaker is)</span>
+              <select id="output_focus"><option value="center">Centre</option><option value="left">Left</option><option value="right">Right</option></select></label>
+          </div>
+          <div class="hint" id="format-hint"></div>
           <details>
             <summary>Audio enhancement <span class="tag" id="tag-audio"></span></summary>
             <div class="body">
@@ -371,7 +394,7 @@
         <div class="progress" id="progress"><div></div></div>
         <div class="status-line"><span id="status-msg">—</span><span id="status-pct">0%</span></div>
         <div class="phases" id="phases">
-          <span data-phase="combine" id="phase-combine" hidden>Combine</span><span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Extras</span><span data-phase="encode">Encode</span>
+          <span data-phase="combine" id="phase-combine" hidden>Combine</span><span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Extras</span><span data-phase="encode">Encode</span><span data-phase="finish">Finish</span>
         </div>
         <div class="actions">
           <button class="small danger" id="btn-cancel">Cancel</button>
@@ -520,10 +543,18 @@ function updateRunButton() {
 byId("ai.review").addEventListener("change", updateRunButton);
 (function buildChips() {
   const box = byId("target-chips");
-  const targets = [["YouTube Shorts ≤ 3:00", "Keep the final video under 3 minutes (YouTube Shorts)."], ["Instagram Reel ≤ 3:00", "Keep the final video under 3 minutes (Instagram Reel)."], ["Facebook Reel ≤ 1:30", "Keep the final video under 90 seconds (Facebook Reel)."], ["≤ 60 s", "Keep the final video under 60 seconds."], ["Long-form, just clean up", "Keep the full length; only clean up fillers, stumbles and repeats."]];
-  for (const [label, text] of targets) {
+  const targets = [["YouTube Shorts ≤ 3:00", "Keep the final video under 3 minutes (YouTube Shorts).", true], ["Instagram Reel ≤ 3:00", "Keep the final video under 3 minutes (Instagram Reel).", true], ["Facebook Reel ≤ 1:30", "Keep the final video under 90 seconds (Facebook Reel).", true], ["≤ 60 s", "Keep the final video under 60 seconds.", true], ["Long-form, just clean up", "Keep the full length; only clean up fillers, stumbles and repeats.", false]];
+  for (const [label, text, vertical] of targets) {
     const b = document.createElement("button"); b.textContent = label;
-    b.onclick = (e) => { e.preventDefault(); const ta = byId("director.instructions"); ta.value = (ta.value.replace(/Keep the (final video|full length)[^\n]*\n?/g, "").trim() + "\n" + text).trim(); updateTags(); };
+    b.onclick = (e) => {
+      e.preventDefault();
+      const ta = byId("director.instructions"); ta.value = (ta.value.replace(/Keep the (final video|full length)[^\n]*\n?/g, "").trim() + "\n" + text).trim();
+      const src = clips[0] && clips[0].info.video;
+      if (vertical) { if (byId("output_format").value === "source") byId("output_format").value = "vertical-crop"; if (byId("director.skill").querySelector('option[value="shorts"]')) byId("director.skill").value = "shorts"; }
+      else { byId("output_format").value = "source"; }
+      updateFormatHint(); updateSkillDesc(); updateTags();
+      if (vertical && src && src.width > src.height) flash(b, "✓ vertical output set");
+    };
     box.appendChild(b);
   }
 })();
@@ -557,6 +588,9 @@ function applyDefaults(d) {
   if (dd.skill && byId("director.skill").querySelector(`option[value="${dd.skill}"]`)) byId("director.skill").value = dd.skill;
   byId("director.instructions").value = dd.instructions || "";
   byId("encoding.codec").value = d.encoding.codec; byId("encoding.quality").value = d.encoding.quality; byId("encoding.audio_bitrate").value = d.encoding.audio_bitrate;
+  if (typeof d.bundle === "boolean") byId("bundle").checked = d.bundle;
+  if (d.output_format) { byId("output_format").value = d.output_format.kind || "source"; byId("output_focus").value = d.output_format.focus || "center"; }
+  updateFormatHint();
   updateTags();
 }
 function collectOptions() {
@@ -572,8 +606,20 @@ function collectOptions() {
     chapters: { enabled: byId("chapters.enabled").checked, model: byId("chapters.model").value.trim() },
     director: { enabled: editMode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, instructions: byId("director.instructions").value.trim() },
     encoding: { codec: byId("encoding.codec").value, quality: num("encoding.quality"), audio_bitrate: byId("encoding.audio_bitrate").value.trim() },
+    bundle: byId("bundle").checked,
+    output_format: { kind: byId("output_format").value, focus: byId("output_focus").value },
   };
 }
+function updateFormatHint() {
+  const k = byId("output_format").value, src = clips[0] && clips[0].info.video;
+  byId("focus-field").hidden = k !== "vertical-crop";
+  let t = "";
+  if (k === "vertical-crop") t = src && src.width > src.height ? `Landscape ${src.width}×${src.height} source → the sides are cropped away, keeping full height. Set Crop focus to where you sit in frame.` : "Source is already vertical/square — it will be scaled to 1080×1920.";
+  else if (k === "vertical-blur") t = "The whole landscape frame is kept, letterboxed over a blurred copy of itself — nothing is cut off, but the speaker appears smaller.";
+  else if (k === "square") t = "Centre crop to 1080×1080.";
+  byId("format-hint").textContent = t;
+}
+byId("output_format").addEventListener("change", updateFormatHint);
 function updateTags() {
   const o = collectOptions();
   byId("tag-silence").textContent = `${o.silence.min_silence_ms} ms · gap ${o.silence.min_gap_sec}s`;
@@ -584,7 +630,7 @@ function updateTags() {
   byId("tag-extras").textContent = [o.hook.enabled && "hook", o.chapters.enabled && "chapters"].filter(Boolean).join(" + ") || "off";
   byId("tag-enc").textContent = `${o.encoding.codec} · q${o.encoding.quality}`;
   byId("tag-ai-adv").textContent = { ai: "AI judges words", refine: "on top of Auto", full: "exact ranges" }[o.director.mode];
-  byId("tag-shared").textContent = `${o.whisper_model} · ${o.language}${o.audio.enabled ? " · audio" : ""}${o.lut ? " · LUT" : ""}`;
+  byId("tag-shared").textContent = `${o.whisper_model} · ${o.language}${o.output_format.kind !== "source" ? " · " + o.output_format.kind : ""}${o.audio.enabled ? " · audio" : ""}${o.lut ? " · LUT" : ""}`;
   byId("model-hint").textContent = MODEL_NOTES[o.whisper_model] || "";
   const prov = o.director.provider, hasKey = BOOT.keys[prov];
   byId("director-key-hint").textContent = hasKey ? `${PROVIDER_NAMES[prov]} key found.` : `No ${PROVIDER_NAMES[prov]} key yet — add one with "API keys" in the header.`;
@@ -611,6 +657,7 @@ function applyPreset(o) {
   Object.assign(d.audio, o.audio); d.video.lut_path = o.lut;
   Object.assign(d.hook, o.hook); Object.assign(d.chapters, o.chapters); Object.assign(d.encoding, o.encoding);
   d.director = Object.assign(d.director || {}, o.director || {});
+  d.bundle = o.bundle; d.output_format = o.output_format;
   applyDefaults(d);
   if (typeof o.review === "boolean") byId("ai.review").checked = o.review;
 }
@@ -708,6 +755,7 @@ function renderClips() {
     const f = clips[0].info, base = (f.win_path || f.file).replace(/\.[^.]+$/, "");
     byId("output").value = base + (clips.length > 1 ? "_combined_edited.mp4" : "_edited.mp4");
     byId("fit-source").innerHTML = fitHTML(total, f.video && f.video.width, f.video && f.video.height, clips.length > 1 ? "Combined source" : "Source");
+    updateFormatHint();
   }
   const key = clips.map(c => c.path).join("|");
   if (currentPlan && currentPlan.key !== key) { currentPlan = null; byId("result").innerHTML = ""; }
@@ -780,7 +828,7 @@ async function poll() {
   $("#progress > div").style.width = `${j.status === "done" ? 100 : j.overall}%`;
   byId("progress").classList.toggle("running", j.status === "running");
   byId("phase-combine").hidden = !(j.inputs && j.inputs.length > 1);
-  const order = ["combine", "setup", "analysis", "assembly", "ai_enhancement", "encode"];
+  const order = ["combine", "setup", "analysis", "assembly", "ai_enhancement", "encode", "finish"];
   const cur = last ? (last.phase === "ai" ? "ai_enhancement" : last.phase) : null;
   $$("#phases span").forEach(s => { const i = order.indexOf(s.dataset.phase), c = order.indexOf(cur); s.className = j.status === "done" ? "done" : (i < c ? "done" : i === c ? "active" : ""); });
   byId("btn-cancel").disabled = !(j.status === "queued" || j.status === "running");
@@ -800,17 +848,30 @@ function costLine(c) {
     : `price unknown for this model`;
   return `<div class="cost">🧾 ${esc(c.model || c.provider)}${c.carried ? " (plan cost, no new call)" : ""}: <b>${c.input_tokens.toLocaleString()}</b> tokens in · <b>${c.output_tokens.toLocaleString()}</b> out · ${price}</div>`;
 }
+const ALERT_TEXT = {
+  quota: (p) => `<b>Model limit reached — ${p} credits or quota are exhausted.</b> Top up the account, or switch provider/model in the AI editor panel and ask again (the transcript is cached, nothing is lost).`,
+  rate_limit: (p) => `<b>${p} is rate-limiting you.</b> Wait a minute and press Ask AI again, or switch to another provider.`,
+  auth: (p) => `<b>${p} rejected the API key.</b> Check it under API keys (header) — it may be missing, mistyped, revoked, or lack permission.`,
+  model: (p) => `<b>${p} does not serve the selected model any more.</b> Pick another one from the Model dropdown (press ↻ to refresh the list).`,
+  refusal: (p) => `<b>${p} declined this request.</b> Try a different model or rephrase the instructions.`,
+};
+function showAlert(kind, html) { const a = byId("alert"); a.className = kind; byId("alert-text").innerHTML = html; a.hidden = false; }
+byId("alert-close").onclick = () => { byId("alert").hidden = true; };
 function renderResult(j) {
   const r = j.result, box = byId("result");
   if (j.status === "cancelled") { box.innerHTML = `<div class="banner err">Cancelled.</div>`; return; }
   if (j.status === "error") {
-    box.innerHTML = `<div class="banner err"><b>Failed:</b> ${esc(j.error || "unknown error")}<br><span class="hint">Open the log for details.</span></div>`;
+    const prov = PROVIDER_NAMES[collectOptions().director.provider] || "The provider";
+    if (j.error_kind && ALERT_TEXT[j.error_kind]) showAlert(j.error_kind, ALERT_TEXT[j.error_kind](prov));
+    box.innerHTML = `<div class="banner err"><b>Failed${j.error_kind ? ` (${j.error_kind.replace("_", " ")})` : ""}:</b> ${esc((j.error || "unknown error").replace(/^\s*AI Director failed: /, ""))}<br><span class="hint">Open the log for details.</span></div>`;
     byId("log").hidden = false; byId("btn-toggle-log").textContent = "Hide log"; return;
   }
   if (r.status === "plan") { renderPlan(j); return; }
-  const saved = r.duration_original_sec - r.duration_edited_sec, winOut = toWin(r.output_video);
+  const saved = r.duration_original_sec - r.duration_edited_sec, winOut = toWin(r.output_video), winDir = r.output_folder && toWin(r.output_folder);
   box.innerHTML = `
-    <div class="banner ok">Done in ${fmtSec(r.processing_time_sec)} — saved to<br><span class="path">${esc(winOut || r.output_video)}</span></div>
+    <div class="banner ok">Done in ${fmtSec(r.processing_time_sec)} — ${r.output_folder ? `saved in folder<br><span class="path">${esc(winDir || r.output_folder)}</span><div class="files">${(r.bundle_files || []).map(f => `<span>${esc(f)}</span>`).join("")}</div>` : `saved to<br><span class="path">${esc(winOut || r.output_video)}</span>`}
+      ${r.output_width ? `<div class="hint" style="margin:6px 0 0">Output: ${r.output_width}×${r.output_height}${r.output_height > r.output_width ? " · vertical" : r.output_width === r.output_height ? " · square" : " · landscape"}</div>` : ""}
+      ${r.format_error ? `<div class="hint" style="color:var(--warn)">Format conversion failed: ${esc(r.format_error)} — saved at source size.</div>` : ""}</div>
     ${r.director_plan ? `<div class="plan-summary"><b>AI editor${r.director_plan.skill_name ? ` · ${esc(r.director_plan.skill_name)}` : ""}:</b> ${esc(r.director_plan.summary || "")}</div>` : ""}
     <div class="stats">
       <div class="stat"><b>${fmtSec(r.duration_original_sec)} → ${fmtSec(r.duration_edited_sec)}</b><span>duration (−${saved.toFixed(1)}s, ${Math.round(saved / r.duration_original_sec * 100)}%)</span></div>
@@ -818,12 +879,12 @@ function renderResult(j) {
         : `<div class="stat"><b>${r.fillers_removed}</b><span>filler words cut</span></div><div class="stat"><b>${r.restarts_removed}</b><span>failed takes cut</span></div>`}
     </div>
     ${costLine(j.cost)}
-    <div class="fit">${fitHTML(r.duration_edited_sec, clips[0] && clips[0].info.video && clips[0].info.video.width, clips[0] && clips[0].info.video && clips[0].info.video.height, "Edited video")}</div>
+    <div class="fit">${fitHTML(r.duration_edited_sec, r.output_width || (clips[0] && clips[0].info.video && clips[0].info.video.width), r.output_height || (clips[0] && clips[0].info.video && clips[0].info.video.height), "Edited video")}</div>
     <video controls preload="metadata" src="/api/media?path=${encodeURIComponent(r.output_video)}"></video>
     ${r.continue_ready ? `<div class="actions"><button class="primary" id="btn-continue">✂ Keep editing this result</button></div>
       <div class="hint">Loads the edited video as the new source with its transcript carried over — no re-transcription. Then tell the AI what else to cut (e.g. "remove the part about pricing" or "cut 0:42–0:55").</div>` : ""}
     ${r.chapters_text ? `<h3 class="sub">YouTube chapters</h3><pre class="chapters">${esc(r.chapters_text)}</pre><div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(r.chapters_text)});flash(this,'Copied ✓')">Copy chapters</button></div>` : ""}
-    <div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(winOut || r.output_video)});flash(this,'Copied ✓')">Copy output path</button></div>`;
+    <div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(winDir || winOut || r.output_video)});flash(this,'Copied ✓')">Copy ${r.output_folder ? "folder" : "output"} path</button></div>`;
   const cont = byId("btn-continue");
   if (cont) cont.onclick = async () => {
     clips = []; currentPlan = null;
@@ -869,7 +930,8 @@ function renderPlan(j) {
     let ranges;
     if (!plan.reordered) ranges = [...kept, ...restored].sort((a, b) => a.start - b.start);
     else { ranges = [...kept]; for (const rp of restored.sort((a, b) => a.start - b.start)) { let idx = -1; ranges.forEach((k, i) => { if (k.start < rp.start) idx = i; }); ranges.splice(idx + 1, 0, rp); } }
-    submit("render", { selected_ranges: ranges.map(p => ({ start: p.start, end: p.end })), carry_cost: currentPlan && currentPlan.cost });
+    const reviewed = { ...plan, keep: kept, removed: plan.removed.filter(p => !restored.includes(p)), restored, final_keep_segments: undefined };
+    submit("render", { selected_ranges: ranges.map(p => ({ start: p.start, end: p.end })), carry_cost: currentPlan && currentPlan.cost, carry_plan: reviewed });
   };
   byId("btn-revise").onclick = () => {
     const extra = byId("revise").value.trim(); if (!extra) return;
@@ -903,11 +965,23 @@ byId("btn-key").onclick = () => { byId("key-input").value = ""; byId("key-provid
 byId("key-cancel").onclick = () => byId("key-dialog").close();
 byId("key-save").onclick = async () => {
   const r = await api("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: byId("key-provider").value, api_key: byId("key-input").value }) });
-  BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true);
+  BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true); refreshQuota();
 };
+let QUOTA = {};
+async function refreshQuota() {
+  try { QUOTA = await api("/api/quota"); } catch { QUOTA = {}; }
+  setKeyPill();
+  const orq = QUOTA.openrouter;
+  if (orq && orq.remaining != null && orq.remaining < 0.5) showAlert("low", `<b>OpenRouter balance is ${usd(orq.remaining)}.</b> Hook/chapters and OpenRouter-routed edits will fail once it hits zero — top up at openrouter.ai/credits or use another provider for the AI editor.`);
+}
 function setKeyPill() {
   byId("key-pills").innerHTML = Object.entries({ anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", nvidia: "NVIDIA" })
-    .map(([k, n]) => `<span class="pill ${BOOT.keys[k] ? "ok" : ""}" title="${BOOT.keys[k] ? "key set" : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}</span>`).join("");
+    .map(([k, n]) => {
+      const q = QUOTA[k];
+      const bal = q && q.remaining != null ? ` · ${usd(q.remaining)} left` : "";
+      const low = q && q.remaining != null && q.remaining < 0.5;
+      return `<span class="pill ${BOOT.keys[k] ? (low ? "warn" : "ok") : ""}" title="${BOOT.keys[k] ? "key set" + (q && q.error ? " · balance unavailable: " + esc(q.error) : "") : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}${bal}</span>`;
+    }).join("");
 }
 
 // ─────────────── boot ───────────────
@@ -930,6 +1004,7 @@ function setKeyPill() {
   refreshJobs();
   loadModels();
   refreshWhisper();
+  refreshQuota();
 })();
 </script>
 </body>

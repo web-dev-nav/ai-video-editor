@@ -31,7 +31,28 @@ NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
 class LLMError(RuntimeError):
-    pass
+    """Provider failure. `kind` is one of: quota (credits/quota exhausted), rate_limit,
+    auth (bad key), model (unknown/retired model), refusal, other. The message is
+    prefixed with "[kind]" so the classification survives the CLI's JSON output."""
+
+    def __init__(self, message: str, kind: str = "other") -> None:
+        self.kind = kind
+        super().__init__(f"[{kind}] {message}")
+
+
+def classify_http(status: int | None, text: str) -> str:
+    t = (text or "").lower()
+    if status == 402 or any(k in t for k in ("insufficient_quota", "insufficient credits", "insufficient_credits",
+                                             "out of credits", "credit balance", "exceeded your current quota",
+                                             "billing", "payment required", "quota")):
+        return "quota"
+    if status == 429 or "rate limit" in t or "rate_limit" in t or "too many requests" in t:
+        return "rate_limit"
+    if status in (401, 403) or "invalid api key" in t or "authentication" in t or "unauthorized" in t:
+        return "auth"
+    if status in (404, 410) or "not found" in t or "end of life" in t or "does not exist" in t:
+        return "model"
+    return "other"
 
 
 def available_providers() -> dict[str, bool]:
@@ -54,7 +75,7 @@ def complete(
     if not os.environ.get(KEY_ENV.get(provider, "")):
         raise LLMError(
             f"{KEY_ENV.get(provider, provider)} is not set. Add it to .env or the environment "
-            f"to use the '{provider}' provider."
+            f"to use the '{provider}' provider.", "auth"
         )
     if provider == "anthropic":
         return _anthropic(prompt, system, model, max_tokens)
@@ -82,19 +103,21 @@ def _anthropic(prompt: str, system: str, model: str, max_tokens: int) -> tuple[s
         ) as stream:
             msg = stream.get_final_message()
     except anthropic.AuthenticationError as e:
-        raise LLMError(f"Anthropic: invalid API key ({e.message})") from e
+        raise LLMError(f"Anthropic: invalid API key ({e.message})", "auth") from e
+    except anthropic.PermissionDeniedError as e:
+        raise LLMError(f"Anthropic: key lacks permission ({e.message})", "auth") from e
     except anthropic.NotFoundError as e:
-        raise LLMError(f"Anthropic: unknown model '{model}' ({e.message})") from e
+        raise LLMError(f"Anthropic: unknown model '{model}' ({e.message})", "model") from e
     except anthropic.RateLimitError as e:
-        raise LLMError(f"Anthropic: rate limited ({e.message})") from e
+        raise LLMError(f"Anthropic: {e.message}", classify_http(429, e.message)) from e
     except anthropic.APIStatusError as e:
-        raise LLMError(f"Anthropic API error {e.status_code}: {e.message}") from e
+        raise LLMError(f"Anthropic API error {e.status_code}: {e.message}", classify_http(e.status_code, e.message)) from e
     except anthropic.APIConnectionError as e:
-        raise LLMError(f"Anthropic: connection error ({e})") from e
+        raise LLMError(f"Anthropic: connection error ({e})", "other") from e
 
     if msg.stop_reason == "refusal":
         detail = getattr(msg, "stop_details", None)
-        raise LLMError(f"Anthropic declined the request ({getattr(detail, 'category', 'refusal')})")
+        raise LLMError(f"Anthropic declined the request ({getattr(detail, 'category', 'refusal')})", "refusal")
     text = "".join(b.text for b in msg.content if b.type == "text")
     usage = {
         "input_tokens": msg.usage.input_tokens,
@@ -116,15 +139,17 @@ def _openai(prompt: str, system: str, model: str, max_tokens: int) -> tuple[str,
             max_output_tokens=max_tokens,
         )
     except openai.AuthenticationError as e:
-        raise LLMError(f"OpenAI: invalid API key ({e})") from e
+        raise LLMError(f"OpenAI: invalid API key ({e})", "auth") from e
+    except openai.PermissionDeniedError as e:
+        raise LLMError(f"OpenAI: key lacks permission ({e})", "auth") from e
     except openai.NotFoundError as e:
-        raise LLMError(f"OpenAI: unknown model '{model}' ({e})") from e
+        raise LLMError(f"OpenAI: unknown model '{model}' ({e})", "model") from e
     except openai.RateLimitError as e:
-        raise LLMError(f"OpenAI: rate limited ({e})") from e
+        raise LLMError(f"OpenAI: {e}", classify_http(429, str(e))) from e
     except openai.APIStatusError as e:
-        raise LLMError(f"OpenAI API error {e.status_code}: {e}") from e
+        raise LLMError(f"OpenAI API error {e.status_code}: {e}", classify_http(e.status_code, str(e))) from e
     except openai.APIConnectionError as e:
-        raise LLMError(f"OpenAI: connection error ({e})") from e
+        raise LLMError(f"OpenAI: connection error ({e})", "other") from e
 
     text = resp.output_text
     u = getattr(resp, "usage", None)
@@ -149,15 +174,17 @@ def _nvidia(prompt: str, system: str, model: str, max_tokens: int) -> tuple[str,
             temperature=0.2,
         )
     except openai.AuthenticationError as e:
-        raise LLMError(f"NVIDIA NIM: invalid API key ({e})") from e
+        raise LLMError(f"NVIDIA NIM: invalid API key ({e})", "auth") from e
+    except openai.PermissionDeniedError as e:
+        raise LLMError(f"NVIDIA NIM: authorization failed ({e})", "auth") from e
     except openai.NotFoundError as e:
-        raise LLMError(f"NVIDIA NIM: unknown model '{model}' ({e})") from e
+        raise LLMError(f"NVIDIA NIM: unknown model '{model}' ({e})", "model") from e
     except openai.RateLimitError as e:
-        raise LLMError(f"NVIDIA NIM: rate limited / out of credits ({e})") from e
+        raise LLMError(f"NVIDIA NIM: {e}", classify_http(429, str(e))) from e
     except openai.APIStatusError as e:
-        raise LLMError(f"NVIDIA NIM API error {e.status_code}: {e}") from e
+        raise LLMError(f"NVIDIA NIM API error {e.status_code}: {e}", classify_http(e.status_code, str(e))) from e
     except openai.APIConnectionError as e:
-        raise LLMError(f"NVIDIA NIM: connection error ({e})") from e
+        raise LLMError(f"NVIDIA NIM: connection error ({e})", "other") from e
 
     text = resp.choices[0].message.content or ""
     # Reasoning models (DeepSeek-R1 etc.) may wrap their thinking in <think> tags.
@@ -177,5 +204,7 @@ def _openrouter(prompt: str, system: str, model: str, max_tokens: int) -> tuple[
     try:
         text = chat_completion(prompt=prompt, model=model, system=system, max_tokens=max_tokens)
     except OpenRouterError as e:
-        raise LLMError(str(e)) from e
+        raise LLMError(str(e), classify_http(e.status_code, e.body)) from e
+    except EnvironmentError as e:
+        raise LLMError(str(e), "auth") from e
     return text, {"model": model}
