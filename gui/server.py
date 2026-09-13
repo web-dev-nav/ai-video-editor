@@ -41,6 +41,7 @@ WHISPER_MODELS = ["tiny", "base", "small", "medium", "large", "large-v2", "large
 # Overall-progress slice per pipeline step (start%, end%), in pipeline order.
 # Whisper transcription and the final encode dominate wall-clock time.
 STEP_RANGES = {
+    ("combine", "concat"): (0, 12),
     ("setup", "probe"): (0, 2),
     ("analysis", "extract_audio"): (2, 4),
     ("analysis", "vad"): (4, 8),
@@ -81,6 +82,48 @@ def _keys_present() -> dict[str, bool]:
 
 _MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
 
+# Fallback USD per 1M tokens (input, output) when OpenRouter has no entry.
+STATIC_PRICING = {
+    "claude-fable-5-1": (10, 50), "claude-fable-5": (10, 50), "claude-opus-5": (5, 25),
+    "claude-opus-4-8": (5, 25), "claude-opus-4-7": (5, 25), "claude-opus-4-6": (5, 25),
+    "claude-sonnet-5": (2, 10), "claude-sonnet-4-6": (3, 15), "claude-haiku-4-5": (1, 5),
+}
+
+
+def _pricing(provider: str, model: str) -> dict | None:
+    """USD per 1M tokens for a model: live from OpenRouter's catalogue, else the static table."""
+    if not model:
+        return None
+    or_id = model if provider == "openrouter" else f"{provider}/{model}"
+    try:
+        for m in list_models("openrouter"):
+            if m["id"] == or_id and m.get("pricing"):
+                return {"in": m["pricing"][0], "out": m["pricing"][1], "source": "openrouter catalogue"}
+    except Exception:  # noqa: BLE001
+        pass
+    base = model.split("/")[-1]
+    for k, (i, o) in STATIC_PRICING.items():
+        if base.startswith(k):
+            return {"in": i, "out": o, "source": "built-in table"}
+    return None
+
+
+def cost_for(provider: str, usage: dict | None) -> dict | None:
+    """Turn {input_tokens, output_tokens, model} into a cost record (or None)."""
+    if not usage or usage.get("input_tokens") is None:
+        return None
+    model = usage.get("model") or ""
+    rec = {"provider": provider, "model": model,
+           "input_tokens": int(usage.get("input_tokens") or 0),
+           "output_tokens": int(usage.get("output_tokens") or 0)}
+    pr = _pricing(provider, model)
+    if pr:
+        rec["cost_in"] = round(rec["input_tokens"] / 1e6 * pr["in"], 5)
+        rec["cost_out"] = round(rec["output_tokens"] / 1e6 * pr["out"], 5)
+        rec["cost_total"] = round(rec["cost_in"] + rec["cost_out"], 5)
+        rec["price_in_per_m"], rec["price_out_per_m"], rec["price_source"] = pr["in"], pr["out"], pr["source"]
+    return rec
+
 
 def list_models(provider: str, force: bool = False) -> list[dict]:
     """Fetch chat-capable model ids from the provider's API using the stored key."""
@@ -112,7 +155,12 @@ def list_models(provider: str, force: bool = False) -> list[dict]:
         r.raise_for_status()
         for m in r.json().get("data", []):
             mid = m.get("id", "")
-            models.append({"id": mid, "name": m.get("name") or mid, "created": m.get("created", 0) or 0})
+            pr = m.get("pricing") or {}
+            try:
+                pricing = (float(pr.get("prompt", 0)) * 1e6, float(pr.get("completion", 0)) * 1e6)
+            except (TypeError, ValueError):
+                pricing = None
+            models.append({"id": mid, "name": m.get("name") or mid, "created": m.get("created", 0) or 0, "pricing": pricing})
         # Big list: lead with the major vendors, newest first within each
         rank = {"anthropic": 0, "openai": 1, "google": 2}
         models.sort(key=lambda m: (rank.get(m["id"].split("/")[0], 9), -m["created"]))
@@ -180,7 +228,17 @@ class Job:
         self.finished: float | None = None
         self.proc: subprocess.Popen | None = None
         self.config_file: Path | None = None
+        self.cost: dict | None = None
         self.lock = threading.Lock()
+
+    def _event(self, phase: str, step: str, progress: float, message: str) -> None:
+        """Record a GUI-generated progress event (same shape as the CLI's)."""
+        with self.lock:
+            ev = {"phase": phase, "step": step, "progress": round(progress, 3), "message": message,
+                  "t": round(time.time() - (self.started or time.time()), 1)}
+            self.events.append(ev)
+            self.overall = _phase_progress(phase, step, progress, self.overall)
+            self.log.append(json.dumps(ev))
 
     def to_dict(self, since: int = 0) -> dict:
         with self.lock:
@@ -189,7 +247,9 @@ class Job:
                 "status": self.status,
                 "mode": self.params.get("mode", "process"),
                 "input": self.params["input"],
+                "inputs": self.params.get("inputs") or [self.params["input"]],
                 "output": self.params["output"],
+                "cost": self.cost,
                 "overall": round(self.overall, 1),
                 "events": self.events[since:],
                 "event_count": len(self.events),
@@ -280,6 +340,62 @@ def _build_config(p: dict) -> dict:
     return cfg
 
 
+def _combined_path(inputs: list[str]) -> Path:
+    key = "|".join(f"{Path(p).resolve()}:{Path(p).stat().st_size}:{int(Path(p).stat().st_mtime)}" for p in inputs)
+    return CACHE_DIR / "combined" / (hashlib.sha1(key.encode()).hexdigest()[:16] + ".mp4")
+
+
+def _probe(path: str) -> dict:
+    out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", path],
+                         capture_output=True, text=True).stdout
+    return json.loads(out or "{}")
+
+
+def _combine_clips(job: "Job", inputs: list[str], dest: Path) -> None:
+    """Concatenate clips into one file, normalised to the first clip's size/fps, 48 kHz stereo AAC."""
+    infos = [_probe(p) for p in inputs]
+    total = 0.0
+    for p, info in zip(inputs, infos):
+        streams = info.get("streams", [])
+        if not any(st.get("codec_type") == "video" for st in streams):
+            raise RuntimeError(f"{Path(p).name}: no video stream")
+        if not any(st.get("codec_type") == "audio" for st in streams):
+            raise RuntimeError(f"{Path(p).name}: no audio track — every clip needs audio to be combined")
+        total += float(info.get("format", {}).get("duration", 0) or 0)
+    v0 = next(st for st in infos[0]["streams"] if st["codec_type"] == "video")
+    w, h = int(v0["width"]), int(v0["height"])
+    num, den = (v0.get("avg_frame_rate") or "30/1").split("/")
+    fps = round(int(num) / max(1, int(den)), 3) or 30
+
+    n = len(inputs)
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1"]
+    for p in inputs:
+        cmd += ["-i", p]
+    parts = []
+    for i in range(n):
+        parts.append(f"[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                     f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{i}]")
+        parts.append(f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo[a{i}]")
+    parts.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
+    cmd += ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", str(dest)]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    job.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert job.proc.stdout
+    for line in job.proc.stdout:
+        if line.startswith("out_time_us=") and total > 0:
+            try:
+                frac = min(1.0, int(line.split("=")[1]) / 1e6 / total)
+            except ValueError:
+                continue
+            job._event("combine", "concat", frac, f"Combining {n} clips… {int(frac * 100)}%")
+    job.proc.wait()
+    err = job.proc.stderr.read() if job.proc.stderr else ""
+    if job.proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg concat failed: {err.strip()[-400:]}")
+
+
 def _phase_progress(phase: str, step: str, progress: float, current: float) -> float:
     rng = STEP_RANGES.get((phase, step))
     if rng is None:
@@ -293,6 +409,27 @@ def _run_job(job: Job) -> None:
     job.status = "running"
     job.started = time.time()
     p = job.params
+
+    inputs = p.get("inputs") or [p["input"]]
+    multi = len(inputs) > 1
+    if multi:
+        dest = _combined_path(inputs)
+        if dest.exists():
+            job._event("combine", "concat", 1.0, f"Using cached combination of {len(inputs)} clips.")
+        else:
+            job._event("combine", "concat", 0.0, f"Combining {len(inputs)} clips…")
+            try:
+                _combine_clips(job, inputs, dest)
+            except Exception as exc:  # noqa: BLE001
+                with job.lock:
+                    if job.status != "cancelled":
+                        job.status = "error"
+                        job.error = str(exc)
+                    job.finished = time.time()
+                return
+            job._event("combine", "concat", 1.0, "Clips combined.")
+        p["input"] = str(dest)
+        job.proc = None
 
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     job.config_file = JOBS_DIR / f"{job.id}.yml"
@@ -358,9 +495,10 @@ def _run_job(job: Job) -> None:
                     continue
                 ev["t"] = round(time.time() - job.started, 1)
                 job.events.append(ev)
-                job.overall = _phase_progress(
-                    ev.get("phase", ""), ev.get("step", ""), float(ev.get("progress", 0)), job.overall
-                )
+                val = _phase_progress(ev.get("phase", ""), ev.get("step", ""), float(ev.get("progress", 0)),
+                                      0.0 if multi else job.overall)
+                # With a combine phase in front, the pipeline occupies 12–100 %.
+                job.overall = max(job.overall, 12 + val * 0.88) if multi else val
             else:
                 job.log.append(line)
 
@@ -389,6 +527,11 @@ def _run_job(job: Job) -> None:
             job.status = "done"
             job.result = result
             job.overall = 100.0
+            plan = result.get("plan") or result.get("director_plan")
+            if plan and plan.get("usage"):
+                job.cost = cost_for(plan.get("provider", ""), plan["usage"])
+            elif p.get("carry_cost"):
+                job.cost = {**p["carry_cost"], "carried": True}
             chapters_file = result.get("chapters_file")
             if chapters_file and Path(chapters_file).exists():
                 try:
@@ -562,25 +705,34 @@ async def api_media(request: Request):
 
 async def api_jobs_create(request: Request):
     body = await request.json()
-    inp = win_to_wsl(body.get("input", ""))
-    if not Path(inp).is_file():
-        return JSONResponse({"error": f"Input not found: {inp}"}, status_code=400)
+    inputs = [win_to_wsl(x) for x in (body.get("inputs") or [body.get("input", "")]) if x]
+    if not inputs:
+        return JSONResponse({"error": "No input video"}, status_code=400)
+    for x in inputs:
+        if not Path(x).is_file():
+            return JSONResponse({"error": f"Input not found: {x}"}, status_code=400)
+    first = inputs[0]
+    pipeline_input = str(_combined_path(inputs)) if len(inputs) > 1 else first
     out = body.get("output") or ""
-    out = win_to_wsl(out) if out else str(Path(inp).with_name(Path(inp).stem + "_edited.mp4"))
-    if Path(out).resolve() == Path(inp).resolve():
-        return JSONResponse({"error": "Output path must differ from input"}, status_code=400)
+    suffix = "_combined_edited.mp4" if len(inputs) > 1 else "_edited.mp4"
+    out = win_to_wsl(out) if out else str(Path(first).with_name(Path(first).stem + suffix))
+    if any(Path(out).resolve() == Path(x).resolve() for x in inputs):
+        return JSONResponse({"error": "Output path must differ from the inputs"}, status_code=400)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     options = body.get("options") or {}
     mode = body.get("mode", "process")
     keep_segments = None
     if mode == "render":
+        if not Path(pipeline_input).is_file():
+            return JSONResponse({"error": "Combined clip not found — ask for a plan first."}, status_code=400)
         try:
-            keep_segments = _finalize_keep(inp, options, body.get("selected_ranges") or [])
+            keep_segments = _finalize_keep(pipeline_input, options, body.get("selected_ranges") or [])
         except Exception as exc:  # noqa: BLE001
             return JSONResponse({"error": f"Could not finalize plan: {exc}"}, status_code=400)
         if not keep_segments:
             return JSONResponse({"error": "Nothing selected to keep."}, status_code=400)
-    job = Job({"input": inp, "output": out, "options": options, "mode": mode, "keep_segments": keep_segments})
+    job = Job({"input": first, "inputs": inputs, "output": out, "options": options, "mode": mode,
+               "keep_segments": keep_segments, "carry_cost": body.get("carry_cost")})
     JOBS[job.id] = job
     with QUEUE_CV:
         QUEUE.append(job)
@@ -616,7 +768,17 @@ def _finalize_keep(inp: str, options: dict, selected: list[dict]) -> list[dict]:
 
 async def api_jobs_list(request: Request):
     jobs = sorted(JOBS.values(), key=lambda j: -j.created)
-    return JSONResponse([{k: v for k, v in j.to_dict().items() if k not in ("events", "log")} for j in jobs])
+    totals = {"input_tokens": 0, "output_tokens": 0, "cost_total": 0.0, "calls": 0}
+    for j in jobs:
+        c = j.cost
+        if c and not c.get("carried"):
+            totals["calls"] += 1
+            totals["input_tokens"] += c.get("input_tokens", 0)
+            totals["output_tokens"] += c.get("output_tokens", 0)
+            totals["cost_total"] += c.get("cost_total", 0.0) or 0.0
+    totals["cost_total"] = round(totals["cost_total"], 4)
+    return JSONResponse({"jobs": [{k: v for k, v in j.to_dict().items() if k not in ("events", "log")} for j in jobs],
+                         "totals": totals})
 
 
 async def api_job_get(request: Request):

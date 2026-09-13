@@ -8,6 +8,19 @@ It opens http://localhost:8765 in your browser (add `--no-browser` to skip that)
 Pick a video from your Windows Downloads/Videos/Desktop, adjust settings, press
 **Process video**. Output lands next to the input as `<name>_edited.mp4`.
 
+## Multiple clips
+
+Click several videos (or **+ all** for a folder) to build an ordered sequence;
+reorder with ↑/↓. They are joined in that order — normalised to the first clip's
+resolution and frame rate — and then edited as one video in either mode. The
+combined file is cached under `uploads/.cache/combined/`.
+
+## Usage & cost
+
+Every AI plan or render shows the tokens in/out and the cost (input, output,
+total). Prices come live from OpenRouter's model catalogue (covers Claude and
+GPT models), with a built-in table as fallback. History shows the session total.
+
 ## Two ways to edit
 
 **Auto** — fixed rules, offline: trims dead air (voice detection), removes words

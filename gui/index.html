@@ -138,6 +138,18 @@
   .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; width: 440px; max-width: 95vw; }
   dialog::backdrop { background: rgba(0,0,0,.6); }
+  .clip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; margin-bottom: 6px; background: var(--panel2); font-size: 12px; }
+  .clip .n { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .clip .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .clip .name:hover { text-decoration: underline; }
+  .clip .meta { color: var(--muted); font-size: 11px; }
+  .clip button { padding: 2px 6px; font-size: 11px; }
+  .list .item .add { padding: 1px 7px; font-size: 12px; }
+  .list .item.inseq { background: rgba(62,207,142,.08); }
+  .cost { font-size: 12px; color: var(--muted); margin-top: 8px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; line-height: 1.5; }
+  .cost b { color: var(--text); }
+  .totals { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
+  .totals b { color: var(--text); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -157,7 +169,8 @@
     <div class="card">
       <h2><span class="step">1</span> Pick a video</h2>
       <div class="roots" id="roots"></div>
-      <div class="crumb"><button class="small" id="btn-up" title="Parent folder">↑</button><span id="crumb"></span></div>
+      <div class="crumb"><button class="small" id="btn-up" title="Parent folder">↑</button><span id="crumb" style="flex:1"></span><button class="small" id="btn-add-all" title="Add every video in this folder to the sequence">+ all</button></div>
+      <div class="hint" style="margin:0 0 6px">Click a video to add it. Add several to combine them in order.</div>
       <div class="list" id="list"></div>
       <label class="field" style="margin-top:10px"><span>…or paste a path (Windows or WSL style)</span>
         <input type="text" id="path-input" placeholder="C:\Users\Navjot\Downloads\clip.mp4"></label>
@@ -166,8 +179,9 @@
         <div id="upload-status"></div></div>
     </div>
     <div class="card" id="preview-card" hidden>
-      <h2>Selected</h2>
-      <div class="path" id="sel-path"></div>
+      <h2>Clips <span class="tag" id="clips-tag" style="margin-left:auto;font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0"></span></h2>
+      <div id="clips"></div>
+      <div class="actions" style="margin-top:4px"><button class="small" id="btn-clear-clips">Clear all</button><span class="hint" id="clips-hint" style="margin:0"></span></div>
       <video id="preview" controls preload="metadata"></video>
       <div class="kv" id="info"></div>
     </div>
@@ -335,7 +349,7 @@
         <div class="progress" id="progress"><div></div></div>
         <div class="status-line"><span id="status-msg">—</span><span id="status-pct">0%</span></div>
         <div class="phases" id="phases">
-          <span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Extras</span><span data-phase="encode">Encode</span>
+          <span data-phase="combine" id="phase-combine" hidden>Combine</span><span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Extras</span><span data-phase="encode">Encode</span>
         </div>
         <div class="actions">
           <button class="small danger" id="btn-cancel">Cancel</button>
@@ -348,6 +362,7 @@
     </div>
     <div class="card">
       <h2>History</h2>
+      <div class="totals" id="totals" hidden></div>
       <div class="jobs" id="jobs"><div class="hint">No jobs yet.</div></div>
     </div>
   </section>
@@ -393,7 +408,7 @@ const MODEL_NOTES = {
 };
 const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter" };
 
-let BOOT = null, DEFAULTS = null, selected = null, currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
+let BOOT = null, DEFAULTS = null, clips = [], currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
 let editMode = localStorage.getItem("ave.mode") || "auto";
 
 // ─────────────── mode chooser ───────────────
@@ -408,15 +423,16 @@ $$(".mode").forEach(el => el.onclick = () => setMode(el.dataset.mode));
 
 function updateRunButton() {
   const b = byId("btn-run"), h = byId("run-hint");
-  if (!selected) { b.disabled = true; b.textContent = "Select a video to start"; h.textContent = ""; return; }
+  if (!clips.length) { b.disabled = true; b.textContent = "Select a video to start"; h.textContent = ""; return; }
+  const multi = clips.length > 1 ? ` (${clips.length} clips)` : "";
   const busy = currentJob && ["running", "queued"].includes(currentJobStatus);
   b.disabled = !!busy;
   if (editMode === "auto") {
-    b.textContent = busy ? "Working…" : "▶ Edit video (Auto)";
+    b.textContent = busy ? "Working…" : `▶ Edit video (Auto)${multi}`;
     h.textContent = "Runs the fixed rules and renders straight away.";
   } else {
     const review = byId("ai.review").checked;
-    b.textContent = busy ? "Working…" : (review ? "✨ Ask AI for a plan" : "✨ AI edit & render");
+    b.textContent = busy ? "Working…" : (review ? `✨ Ask AI for a plan${multi}` : `✨ AI edit & render${multi}`);
     h.textContent = review ? "The AI proposes cuts; you review them here, then press Render." : "The AI's cuts are applied and rendered without review.";
   }
 }
@@ -540,32 +556,63 @@ async function browse(path) {
   const list = byId("list"); list.innerHTML = "";
   for (const d of data.dirs) { const el = document.createElement("div"); el.className = "item"; el.innerHTML = `<span>📁</span><span class="name">${esc(d.name)}</span>`; el.onclick = () => browse(d.path); list.appendChild(el); }
   for (const f of data.files) {
-    const el = document.createElement("div"); el.className = "item" + (selected && selected.path === f.path ? " selected" : "");
-    el.innerHTML = `<span>🎞️</span><span class="name" title="${esc(f.name)}">${esc(f.name)}</span><span class="meta">${f.size_mb} MB</span>`;
-    el.onclick = () => selectFile(f.path); list.appendChild(el);
+    const inseq = clips.some(c => c.path === f.path);
+    const el = document.createElement("div"); el.className = "item" + (inseq ? " inseq" : "");
+    el.innerHTML = `<span>🎞️</span><span class="name" title="${esc(f.name)}">${esc(f.name)}</span><span class="meta">${f.size_mb} MB</span><button class="add" title="${inseq ? "Remove from sequence" : "Add to sequence"}">${inseq ? "✓" : "+"}</button>`;
+    el.onclick = () => inseq ? removeClip(f.path) : addClip(f.path); list.appendChild(el);
   }
   if (!data.dirs.length && !data.files.length) list.innerHTML = `<div class="empty">No videos or folders here.</div>`;
   localStorage.setItem("ave.cwd", data.path);
 }
 byId("btn-up").onclick = () => cwd && cwd.parent && browse(cwd.parent);
-byId("path-input").addEventListener("change", () => { const v = byId("path-input").value.trim(); if (v) selectFile(v); });
+byId("btn-add-all").onclick = async () => { if (!cwd) return; for (const f of cwd.files.slice().sort((a, b) => a.name.localeCompare(b.name))) if (!clips.some(c => c.path === f.path)) await addClip(f.path, true); renderClips(); browse(cwd.path); };
+byId("path-input").addEventListener("change", () => { const v = byId("path-input").value.trim(); if (v) { addClip(v); byId("path-input").value = ""; } });
 
-async function selectFile(path) {
+async function addClip(path, quiet = false) {
+  if (clips.some(c => c.path === path || c.path === path.replace(/\\/g, "/"))) return;
   let info;
   try { info = await api(`/api/info?path=${encodeURIComponent(path)}`); }
   catch (e) { alert("Could not read that file: " + e.message); return; }
-  selected = { path: info.file, info };
-  byId("preview-card").hidden = false;
-  byId("sel-path").textContent = info.win_path || info.file;
+  if (clips.some(c => c.path === info.file)) return;
+  clips.push({ path: info.file, info });
+  showPreview(clips[clips.length - 1]);
+  if (!quiet) { renderClips(); if (cwd) browse(cwd.path); }
+}
+function removeClip(path) { clips = clips.filter(c => c.path !== path); renderClips(); if (cwd) browse(cwd.path); }
+function moveClip(i, d) { const j = i + d; if (j < 0 || j >= clips.length) return; [clips[i], clips[j]] = [clips[j], clips[i]]; renderClips(); }
+byId("btn-clear-clips").onclick = () => { clips = []; renderClips(); if (cwd) browse(cwd.path); };
+function showPreview(c) {
+  const info = c.info;
   byId("preview").src = `/api/media?path=${encodeURIComponent(info.file)}`;
   byId("info").innerHTML = [
+    ["File", esc(info.win_path || info.file)],
     ["Duration", fmtSec(info.duration_sec)], ["Size", `${info.size_mb} MB`],
     ["Video", info.video ? `${info.video.codec} · ${info.video.width}×${info.video.height} · ${info.video.fps} fps` : "—"],
     ["Audio", info.audio ? `${info.audio.codec} · ${info.audio.sample_rate} Hz · ${info.audio.channels} ch` : "— (no audio track!)"],
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
-  byId("output").value = info.win_path ? info.win_path.replace(/\.[^.]+$/, "") + "_edited.mp4" : info.file.replace(/\.[^.]+$/, "") + "_edited.mp4";
-  $$("#list .item").forEach(el => el.classList.toggle("selected", el.querySelector(".name")?.title === info.file.split("/").pop()));
-  if (currentPlan && currentPlan.input !== info.file) { currentPlan = null; byId("result").innerHTML = ""; }
+}
+function renderClips() {
+  const card = byId("preview-card"), box = byId("clips");
+  card.hidden = !clips.length;
+  const total = clips.reduce((a, c) => a + (c.info.duration_sec || 0), 0);
+  byId("clips-tag").textContent = clips.length ? `${clips.length} clip${clips.length > 1 ? "s" : ""} · ${fmtSec(total)}` : "";
+  byId("clips-hint").textContent = clips.length > 1 ? "Clips are joined in this order (first clip's size/fps), then edited as one video." : "";
+  box.innerHTML = "";
+  clips.forEach((c, i) => {
+    const el = document.createElement("div"); el.className = "clip";
+    el.innerHTML = `<span class="n">${i + 1}</span><span class="name" title="${esc(c.info.win_path || c.path)}">${esc(c.path.split("/").pop())}</span><span class="meta">${fmtSec(c.info.duration_sec)}</span>
+      <button title="Move up" ${i === 0 ? "disabled" : ""}>↑</button><button title="Move down" ${i === clips.length - 1 ? "disabled" : ""}>↓</button><button title="Remove" class="danger">✕</button>`;
+    el.querySelector(".name").onclick = () => showPreview(c);
+    const [up, down, rm] = el.querySelectorAll("button");
+    up.onclick = () => moveClip(i, -1); down.onclick = () => moveClip(i, 1); rm.onclick = () => removeClip(c.path);
+    box.appendChild(el);
+  });
+  if (clips.length) {
+    const f = clips[0].info, base = (f.win_path || f.file).replace(/\.[^.]+$/, "");
+    byId("output").value = base + (clips.length > 1 ? "_combined_edited.mp4" : "_edited.mp4");
+  }
+  const key = clips.map(c => c.path).join("|");
+  if (currentPlan && currentPlan.key !== key) { currentPlan = null; byId("result").innerHTML = ""; }
   updateRunButton();
 }
 
@@ -580,14 +627,14 @@ async function upload(file) {
     const r = await api(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: "PUT", body: file });
     st.textContent = `Uploaded → uploads/${r.name}`;
     await browse(BOOT.roots.find(x => x.label.startsWith("Uploads")).path);
-    selectFile(r.path);
+    addClip(r.path);
   } catch (e) { st.textContent = "Upload failed: " + e.message; }
 }
 
 // ─────────────── running jobs ───────────────
 async function submit(mode, extra = {}) {
-  if (!selected) return;
-  const body = { mode, input: selected.path, output: byId("output").value.trim(), options: collectOptions(), ...extra };
+  if (!clips.length) return;
+  const body = { mode, inputs: clips.map(c => c.path), input: clips[0].path, output: byId("output").value.trim(), options: collectOptions(), ...extra };
   const usesAI = mode === "plan" || (mode === "process" && body.options.director.enabled);
   if (usesAI && !BOOT.keys[body.options.director.provider]) {
     alert(`No ${PROVIDER_NAMES[body.options.director.provider]} API key set. Add one via "API keys" in the header.`); return;
@@ -634,7 +681,8 @@ async function poll() {
   byId("status-pct").textContent = `${Math.round(j.status === "done" ? 100 : j.overall)}% · ${fmtSec(j.elapsed)}`;
   $("#progress > div").style.width = `${j.status === "done" ? 100 : j.overall}%`;
   byId("progress").classList.toggle("running", j.status === "running");
-  const order = ["setup", "analysis", "assembly", "ai_enhancement", "encode"];
+  byId("phase-combine").hidden = !(j.inputs && j.inputs.length > 1);
+  const order = ["combine", "setup", "analysis", "assembly", "ai_enhancement", "encode"];
   const cur = last ? (last.phase === "ai" ? "ai_enhancement" : last.phase) : null;
   $$("#phases span").forEach(s => { const i = order.indexOf(s.dataset.phase), c = order.indexOf(cur); s.className = j.status === "done" ? "done" : (i < c ? "done" : i === c ? "active" : ""); });
   byId("btn-cancel").disabled = !(j.status === "queued" || j.status === "running");
@@ -646,6 +694,14 @@ async function poll() {
   }
 }
 
+const usd = (x) => x == null ? "—" : (x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(3)}`);
+function costLine(c) {
+  if (!c) return "";
+  const price = c.cost_total != null
+    ? `<b>${usd(c.cost_in)}</b> in + <b>${usd(c.cost_out)}</b> out = <b>${usd(c.cost_total)}</b> <span title="${esc(c.price_source || "")}">(${c.price_in_per_m}/${c.price_out_per_m} $ per 1M · ${esc(c.price_source || "")})</span>`
+    : `price unknown for this model`;
+  return `<div class="cost">🧾 ${esc(c.model || c.provider)}${c.carried ? " (plan cost, no new call)" : ""}: <b>${c.input_tokens.toLocaleString()}</b> tokens in · <b>${c.output_tokens.toLocaleString()}</b> out · ${price}</div>`;
+}
 function renderResult(j) {
   const r = j.result, box = byId("result");
   if (j.status === "cancelled") { box.innerHTML = `<div class="banner err">Cancelled.</div>`; return; }
@@ -663,6 +719,7 @@ function renderResult(j) {
       ${r.director_plan ? `<div class="stat"><b>${r.director_plan.removed.length}</b><span>AI cuts</span></div><div class="stat"><b>${r.director_plan.keep.length}</b><span>pieces kept</span></div>`
         : `<div class="stat"><b>${r.fillers_removed}</b><span>filler words cut</span></div><div class="stat"><b>${r.restarts_removed}</b><span>failed takes cut</span></div>`}
     </div>
+    ${costLine(j.cost)}
     <video controls preload="metadata" src="/api/media?path=${encodeURIComponent(r.output_video)}"></video>
     ${r.chapters_text ? `<h3 class="sub">YouTube chapters</h3><pre class="chapters">${esc(r.chapters_text)}</pre><div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(r.chapters_text)});flash(this,'Copied ✓')">Copy chapters</button></div>` : ""}
     <div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(winOut || r.output_video)});flash(this,'Copied ✓')">Copy output path</button></div>`;
@@ -670,7 +727,7 @@ function renderResult(j) {
 
 function renderPlan(j) {
   const r = j.result, box = byId("result"), plan = r.plan;
-  currentPlan = { input: r.input, plan };
+  currentPlan = { input: r.input, plan, key: clips.map(c => c.path).join("|"), cost: j.cost };
   const tr = (r.transcript || []).map(t => `<div><span class="t">${fmtSec(t.start)}</span>${esc(t.text)}</div>`).join("") || `<div class="hint">No speech found.</div>`;
   let html = `<details ${plan ? "" : "open"} style="margin-top:10px"><summary>Transcript <span class="tag">${(r.transcript || []).length} segments</span></summary><div class="body transcript">${tr}</div></details>`;
   if (!plan) {
@@ -688,6 +745,7 @@ function renderPlan(j) {
     <div class="stats"><div class="stat"><b>${fmtSec(plan.duration_before_sec)} → ${fmtSec(plan.duration_after_sec)}</b><span>speech → after AI edit</span></div>
       <div class="stat"><b>${plan.keep.length}</b><span>pieces kept${plan.reordered ? " (reordered)" : ""}</span></div>
       <div class="stat"><b>${plan.removed.length}</b><span>cuts</span></div></div>
+    ${costLine(j.cost)}
     <div class="actions"><button class="primary" id="btn-render">🎬 Render this plan</button></div>
     <h3 class="sub">Cuts — tick any to put back</h3>${plan.removed.length ? plan.removed.map((p, i) => piece(p, "removed", i)).join("") : `<div class="hint">The AI didn't cut anything.</div>`}
     <h3 class="sub">Keeping — untick to drop</h3>${plan.keep.map((p, i) => piece(p, "kept", i)).join("")}
@@ -702,7 +760,7 @@ function renderPlan(j) {
     let ranges;
     if (!plan.reordered) ranges = [...kept, ...restored].sort((a, b) => a.start - b.start);
     else { ranges = [...kept]; for (const rp of restored.sort((a, b) => a.start - b.start)) { let idx = -1; ranges.forEach((k, i) => { if (k.start < rp.start) idx = i; }); ranges.splice(idx + 1, 0, rp); } }
-    submit("render", { selected_ranges: ranges.map(p => ({ start: p.start, end: p.end })) });
+    submit("render", { selected_ranges: ranges.map(p => ({ start: p.start, end: p.end })), carry_cost: currentPlan && currentPlan.cost });
   };
   byId("btn-revise").onclick = () => {
     const extra = byId("revise").value.trim(); if (!extra) return;
@@ -713,15 +771,19 @@ function renderPlan(j) {
 }
 
 async function refreshJobs() {
-  const jobs = await api("/api/jobs"), box = byId("jobs");
+  const { jobs, totals } = await api("/api/jobs"), box = byId("jobs");
+  const t = byId("totals");
+  t.hidden = !totals.calls;
+  t.innerHTML = `This session: <b>${totals.calls}</b> AI call${totals.calls === 1 ? "" : "s"} · <b>${totals.input_tokens.toLocaleString()}</b> in / <b>${totals.output_tokens.toLocaleString()}</b> out · <b>${usd(totals.cost_total)}</b>`;
   if (!jobs.length) { box.innerHTML = `<div class="hint">No jobs yet.</div>`; return; }
   box.innerHTML = "";
   for (const j of jobs) {
     const el = document.createElement("div"); el.className = "item";
-    const name = j.input.split("/").pop();
+    const name = (j.inputs && j.inputs.length > 1) ? `${j.inputs.length} clips · ${j.inputs[0].split("/").pop()} …` : j.input.split("/").pop();
     const kind = { analyze: "transcript", plan: "AI plan", render: "render", process: "edit" }[j.mode] || j.mode;
     const extra = j.status === "done" && j.result ? (j.result.status === "plan" ? kind : `${kind} · ${fmtSec(j.result.duration_original_sec)} → ${fmtSec(j.result.duration_edited_sec)}`) : `${kind} · ${j.status}`;
-    el.innerHTML = `<span class="dot ${j.status}"></span><span class="name" title="${esc(j.input)}">${esc(name)}</span><span class="meta">${esc(extra)}</span>`;
+    const c = j.cost && !j.cost.carried && j.cost.cost_total != null ? ` · ${usd(j.cost.cost_total)}` : "";
+    el.innerHTML = `<span class="dot ${j.status}"></span><span class="name" title="${esc((j.inputs || [j.input]).join("\n"))}">${esc(name)}</span><span class="meta">${esc(extra)}${c}</span>`;
     el.onclick = () => watchJob(j.id);
     box.appendChild(el);
   }

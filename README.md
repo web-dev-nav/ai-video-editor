@@ -54,6 +54,12 @@ ai-video-editor process talk.mp4 -i "tighten it, under 2 minutes"
 
 Config lives under `director:` in `config.default.yml`.
 
+### Multi-clip sequences & cost tracking
+
+Select several clips in the GUI, order them, and they are joined (normalised to
+the first clip's size/fps) before the Auto or AI edit. Every AI call shows tokens
+in/out and the dollar cost; History keeps a session total.
+
 ### Other changes
 
 - **Hindi**: `whisper.language: hi`, a Hindi/Hinglish filler list, and "कट कट" as a restart trigger.
