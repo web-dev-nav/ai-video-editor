@@ -286,9 +286,10 @@ def _remove_fillers(
 
     Returns (updated_segments, filler_word_count_removed).
     """
-    filler_words_en = {w.lower() for w in config.get("words", {}).get("en", [])}
-    filler_words_ru = {w.lower() for w in config.get("words", {}).get("ru", [])}
-    all_fillers = filler_words_en | filler_words_ru
+    # Union of every language's filler list (en, ru, hi, ...)
+    all_fillers = {
+        w.lower() for words in (config.get("words", {}) or {}).values() for w in (words or [])
+    }
     min_duration: float = config.get("min_filler_duration_sec", 0.3)
 
     if not all_fillers:

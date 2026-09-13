@@ -1,5 +1,9 @@
 # AI Video Editor
 
+> **This fork** of [timkulbaev/ai-video-editor](https://github.com/timkulbaev/ai-video-editor) adds a
+> **web GUI**, an **AI Director** (Claude / ChatGPT / OpenRouter decides what to keep from your
+> instructions), **Hindi** support, and Linux/WSL fixes. See [What's new in this fork](#whats-new-in-this-fork).
+
 A local, open-source CLI tool that automatically edits talking-head videos using AI. Point it at a raw recording and it removes silences, filler words ("um", "uh", "ну", "типа"), and failed takes (say "cut cut" to mark a restart). It uses Silero VAD for speech detection, Whisper large-v3 for transcription with word-level timestamps, and FFmpeg for frame-accurate assembly. Optionally generates a smart hook opener and YouTube chapter markers via LLM. Runs entirely on your machine — no cloud APIs required for the core pipeline. Designed to be invoked by AI agents (structured JSON output) or used as an MCP server in Claude Desktop.
 
 ## Features
@@ -12,6 +16,49 @@ A local, open-source CLI tool that automatically edits talking-head videos using
 - **YouTube chapter markers** — LLM generates timestamped chapters from the transcript (optional)
 - **Hardware encoding** — `h264_videotoolbox` on Apple Silicon for fast final encode
 - **Configurable YAML pipeline** — every threshold, model, and feature toggle is overridable
+
+## What's new in this fork
+
+### Web GUI
+
+```bash
+gui/run.sh            # opens http://localhost:8765
+```
+
+Browse your videos (Windows drives are mapped under WSL), tweak every pipeline
+setting, watch live progress, preview the result, and copy chapters — no CLI
+needed. Details in [`gui/README.md`](gui/README.md).
+
+### AI Director
+
+An LLM reads the word-timestamped transcript plus *your* instructions
+("cut to 60 s, drop the tangent about the weather, open with the strongest line")
+and returns the pieces to keep, with a reason for every cut. You review the plan
+in the GUI — untick / restore pieces, ask for revisions — then render.
+Silence, filler and failed-take removal still apply on top ("refine" mode).
+
+Providers: **Anthropic** (`ANTHROPIC_API_KEY`), **OpenAI** (`OPENAI_API_KEY`),
+or **OpenRouter** (`OPENROUTER_API_KEY`). Model lists are fetched live from the
+provider in the GUI.
+
+```bash
+# plan only (cached analysis → re-planning is seconds)
+ai-video-editor process talk.mp4 -i "cut to 60s, keep the demo" --plan-only --analysis-cache talk.cache.json
+# render the reviewed plan
+ai-video-editor process talk.mp4 --keep-json keep.json --analysis-cache talk.cache.json -o talk_final.mp4
+# or all in one go
+ai-video-editor process talk.mp4 -i "tighten it, under 2 minutes"
+```
+
+Config lives under `director:` in `config.default.yml`.
+
+### Other changes
+
+- **Hindi**: `whisper.language: hi`, a Hindi/Hinglish filler list, and "कट कट" as a restart trigger.
+  Filler lists are now read for every language key under `fillers.words`.
+- **Linux / WSL**: works with `libx264` (set `encoding.codec: libx264` to skip the VideoToolbox attempt).
+- Extra dependencies the upstream `pyproject.toml` doesn't list: `torchaudio` (needed by Silero VAD),
+  `mcp<2` (upstream targets the 1.x API), `anthropic`, `openai`.
 
 ## Requirements
 

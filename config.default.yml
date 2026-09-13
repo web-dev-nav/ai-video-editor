@@ -1,6 +1,6 @@
 whisper:
   model: large-v3
-  language: auto          # auto-detect, or "en", "ru"
+  language: auto          # auto-detect, or "en", "ru", "hi"
   device: cpu             # cpu for CTranslate2 on Apple Silicon
 
 silence:
@@ -15,6 +15,7 @@ restarts:
   trigger_phrases:
     - "cut cut"
     - "кат кат"
+    - "कट कट"
   detect_repeated_starts: true   # auto-detect sentence restarts
   max_burst_duration_sec: 2.0   # remove short isolated speech segments (restarts, coughs)
 
@@ -24,6 +25,7 @@ fillers:
   words:
     en: ["um", "uh", "like", "you know", "basically", "literally"]
     ru: ["ну", "типа", "вот", "короче", "как бы", "в общем", "эээ", "ээ"]
+    hi: ["मतलब", "यानी", "अम्म", "उम्म", "हम्म", "एक्चुअली", "बेसिकली", "matlab", "yaani", "umm", "hmm"]
 
 audio:
   enabled: false          # disabled by default; enable via --config override
@@ -49,6 +51,14 @@ hook:
 chapters:
   enabled: true
   model: "anthropic/claude-sonnet-4"   # OpenRouter model
+
+director:
+  enabled: false          # AI Director: an LLM decides what content to keep from your instructions
+  provider: anthropic     # anthropic | openai | openrouter (keys: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY)
+  model: claude-opus-5    # provider-specific model id
+  mode: refine            # refine = choose within the automatic cut (silences/fillers stay removed); full = AI ranges as-is
+  instructions: ""        # e.g. "cut to under 60s, drop the tangent about the weather"
+  boundary_padding_sec: 0.15
 
 encoding:
   codec: h264_videotoolbox    # macOS hardware encoder

@@ -27,3 +27,6 @@ tests/debug/
 
 # Logs
 *.log
+
+# GUI uploads, analysis caches, job configs (may contain large videos)
+uploads/

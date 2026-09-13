@@ -61,6 +61,28 @@ def process(
         is_flag=True,
         help="Skip YouTube chapter generation (no OpenRouter call).",
     ),
+    instructions: str | None = typer.Option(
+        None,
+        "--instructions",
+        "-i",
+        help="AI Director: natural-language editing instructions (enables the director step).",
+    ),
+    plan_only: bool = typer.Option(
+        False,
+        "--plan-only",
+        is_flag=True,
+        help="Stop after analysis and print the AI Director plan as JSON (no render).",
+    ),
+    analysis_cache: Path | None = typer.Option(
+        None,
+        "--analysis-cache",
+        help="JSON file to cache/reuse speech detection + transcription for this input.",
+    ),
+    keep_json: Path | None = typer.Option(
+        None,
+        "--keep-json",
+        help="Render exactly these segments: a JSON list of {start, end} in playback order.",
+    ),
 ) -> None:
     """Process a video: remove silences, enhance audio, apply color grade, generate hook + chapters."""
     # Load .env file if present alongside the video or in the tool directory
@@ -74,6 +96,11 @@ def process(
     from .pipeline import run_pipeline, PipelineError
     from .utils.json_output import emit_result, emit_error
 
+    keep_override = None
+    if keep_json is not None:
+        with open(keep_json) as f:
+            keep_override = json.load(f)
+
     try:
         result = run_pipeline(
             input_video=video,
@@ -83,6 +110,10 @@ def process(
             output_path=output,
             no_hook=no_hook,
             no_chapters=no_chapters,
+            instructions=instructions,
+            plan_only=plan_only,
+            analysis_cache=analysis_cache,
+            keep_override=keep_override,
         )
         emit_result(result)
     except PipelineError as e:

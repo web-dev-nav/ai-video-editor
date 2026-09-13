@@ -16,12 +16,20 @@ dependencies = [
     "httpx>=0.27.0",
     # ML / analysis
     "torch>=2.1.0",
+    "torchaudio>=2.1.0",
     "faster-whisper>=1.0.0",
-    # MCP server
-    "mcp>=1.0.0",
+    # MCP server (1.x API: FastMCP)
+    "mcp>=1.0.0,<2",
+    # AI Director providers
+    "anthropic>=1.0.0",
+    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]
+gui = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",

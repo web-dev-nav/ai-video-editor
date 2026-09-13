@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,10 @@ def run_pipeline(
     output_path: str | Path | None = None,
     no_hook: bool = False,
     no_chapters: bool = False,
+    instructions: str | None = None,
+    plan_only: bool = False,
+    analysis_cache: str | Path | None = None,
+    keep_override: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Execute the full video editing pipeline.
 
@@ -38,6 +44,15 @@ def run_pipeline(
         output_path: Optional explicit output file path.
         no_hook: If True, skip the smart hook step.
         no_chapters: If True, skip the chapter generation step.
+        instructions: Natural-language editing instructions for the AI Director.
+            Enables the director step when given.
+        plan_only: Stop after analysis and return the AI Director's plan
+            (status "plan") without assembling or encoding.
+        analysis_cache: JSON file caching VAD + transcription results for this
+            input, so re-planning or re-rendering skips the slow Whisper pass.
+        keep_override: Explicit keep segments [{start, end}] in playback order;
+            skips edit_decisions and the director entirely (used to render a
+            reviewed plan).
 
     Returns:
         A result dict suitable for JSON serialization:
@@ -59,6 +74,10 @@ def run_pipeline(
         config["hook"]["enabled"] = False
     if no_chapters:
         config["chapters"]["enabled"] = False
+    config.setdefault("director", {})
+    if instructions is not None:
+        config["director"]["instructions"] = instructions
+        config["director"]["enabled"] = True
 
     # Probe original video duration
     emit_progress("setup", "probe", 0.0, "Probing input video...")
@@ -90,17 +109,50 @@ def run_pipeline(
         # ------------------------------------------------------------------ #
         emit_progress("analysis", "start", 0.0, "Starting analysis phase...")
 
-        from .steps.extract_audio import run as extract_audio
-        context.update(extract_audio(context, config))
+        cached = _load_analysis_cache(analysis_cache, input_video, config)
+        if cached:
+            emit_progress("analysis", "cache", 1.0, "Loaded cached speech detection + transcript.")
+            context.update(cached)
+        else:
+            from .steps.extract_audio import run as extract_audio
+            context.update(extract_audio(context, config))
 
-        from .steps.detect_speech import run as detect_speech
-        context.update(detect_speech(context, config))
+            from .steps.detect_speech import run as detect_speech
+            context.update(detect_speech(context, config))
 
-        from .steps.transcribe import run as transcribe
-        context.update(transcribe(context, config))
+            from .steps.transcribe import run as transcribe
+            context.update(transcribe(context, config))
 
-        from .steps.edit_decisions import run as edit_decisions
-        context.update(edit_decisions(context, config))
+            _save_analysis_cache(analysis_cache, input_video, config, context)
+
+        if keep_override:
+            context["keep_segments"] = [
+                {"start": float(s["start"]), "end": float(s["end"])} for s in keep_override
+            ]
+            context.setdefault("edit_stats", {})
+            emit_progress("analysis", "edit_decisions", 1.0,
+                          f"Using reviewed plan: {len(keep_override)} segments.")
+        else:
+            from .steps.edit_decisions import run as edit_decisions
+            context.update(edit_decisions(context, config))
+
+            from .steps.ai_director import run as ai_director
+            context.update(ai_director(context, config))
+
+        if plan_only:
+            return {
+                "status": "plan",
+                "input": str(input_video),
+                "duration_original_sec": round(duration_original, 2),
+                "plan": context.get("director_plan"),
+                "keep_segments": context.get("keep_segments", []),
+                "edit_stats": context.get("edit_stats", {}),
+                "transcript": [
+                    {"start": t["start"], "end": t["end"], "text": t.get("text", "").strip()}
+                    for t in context.get("transcript", [])
+                ],
+                "processing_time_sec": timer.elapsed(),
+            }
 
         # ------------------------------------------------------------------ #
         # Phase 2: Assembly
@@ -166,10 +218,61 @@ def run_pipeline(
         "fillers_removed": edit_stats.get("fillers_removed", 0),
         "hook_segment": context.get("hook_segment"),
         "chapters": context.get("chapters"),
+        "director_plan": context.get("director_plan"),
+        "director_removed_sec": edit_stats.get("director_removed_sec", 0.0),
         "processing_time_sec": timer.elapsed(),
     }
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Analysis cache (VAD + transcript) so re-planning skips Whisper
+# ---------------------------------------------------------------------------
+
+def _cache_key(input_video: Path, config: dict[str, Any]) -> dict[str, Any]:
+    st = input_video.stat()
+    return {
+        "input": str(input_video.resolve()),
+        "size": st.st_size,
+        "mtime": int(st.st_mtime),
+        "whisper_model": config["whisper"].get("model"),
+        "language": config["whisper"].get("language", "auto"),
+    }
+
+
+def _load_analysis_cache(path: str | Path | None, input_video: Path, config: dict[str, Any]) -> dict | None:
+    if not path or not Path(path).exists():
+        return None
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if data.get("key") != _cache_key(input_video, config):
+            return None
+        return {
+            "speech_segments": data["speech_segments"],
+            "transcript": data["transcript"],
+            "detected_language": data.get("detected_language"),
+        }
+    except (OSError, KeyError, ValueError) as e:
+        logger.warning("Ignoring unreadable analysis cache %s: %s", path, e)
+        return None
+
+
+def _save_analysis_cache(path: str | Path | None, input_video: Path, config: dict[str, Any], context: dict) -> None:
+    if not path:
+        return
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump({
+                "key": _cache_key(input_video, config),
+                "speech_segments": context.get("speech_segments", []),
+                "transcript": context.get("transcript", []),
+                "detected_language": context.get("detected_language"),
+            }, f)
+    except OSError as e:
+        logger.warning("Could not write analysis cache %s: %s", path, e)
 
 
 def _prepend_hook(context: dict[str, Any], config: dict[str, Any]) -> None:
