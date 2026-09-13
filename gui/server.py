@@ -63,6 +63,13 @@ KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "openro
 DEFAULT_MODELS = {"anthropic": "claude-opus-5", "openai": "gpt-5", "openrouter": "anthropic/claude-sonnet-4",
                   "nvidia": "nvidia/nemotron-3-super-120b-a12b"}
 NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+# Models that do this job well (precise timestamps, good speech judgement); shown first with a ★.
+RECOMMENDED = {
+    "anthropic": {"claude-sonnet-5": "best value", "claude-opus-5": "best quality"},
+    "openai": {"gpt-5": "good"},
+    "openrouter": {"anthropic/claude-sonnet-5": "best value", "anthropic/claude-opus-5": "best quality", "openai/gpt-5": "good"},
+    "nvidia": {"nvidia/nemotron-3-super-120b-a12b": "good, free tier", "deepseek-ai/deepseek-v4-pro-0813": "good, free tier"},
+}
 
 
 def _load_env_file() -> None:
@@ -182,6 +189,11 @@ def list_models(provider: str, force: bool = False) -> list[dict]:
     else:
         raise ValueError("unknown provider")
 
+    rec = RECOMMENDED.get(provider, {})
+    for m in models:
+        if m["id"] in rec:
+            m["recommended"] = rec[m["id"]]
+    models.sort(key=lambda m: 0 if m.get("recommended") else 1)  # stable: keeps existing order within groups
     _MODEL_CACHE[provider] = (now, models)
     return models
 

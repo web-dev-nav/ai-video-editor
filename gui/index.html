@@ -255,6 +255,7 @@
             <input type="text" id="director.model" placeholder="custom model id" style="margin-top:6px" hidden></label>
         </div>
         <div class="hint" id="director-key-hint"></div>
+        <div class="hint">★ = recommended for this job. Start with <b>Claude Sonnet 5</b> (≈ $0.10 per 20-min talk); switch to <b>Opus 5</b> for messy speech or Hindi. Avoid mini/nano/flash-class models — they mangle timestamps.</div>
         <label class="field"><span>Instructions (optional — leave empty for a standard clean-up)</span>
           <textarea id="director.instructions" style="min-height:80px" placeholder="e.g. Keep it under 60 seconds. Drop the part about the weather. Open with the strongest line. Keep my jokes."></textarea></label>
         <label class="switch"><input type="checkbox" id="ai.review" checked> Show me the plan before rendering (recommended)</label>
@@ -557,7 +558,7 @@ async function loadModels(force = false) {
   let data = { models: [] };
   try { data = await api(`/api/models?provider=${prov}${force ? "&refresh=1" : ""}`); } catch (e) { data = { error: e.message, models: [] }; }
   sel.disabled = false;
-  const opts = data.models.map(m => `<option value="${esc(m.id)}">${esc(m.name !== m.id ? `${m.name} — ${m.id}` : m.id)}</option>`);
+  const opts = data.models.map(m => `<option value="${esc(m.id)}">${m.recommended ? "★ " : ""}${esc(m.name !== m.id ? `${m.name} — ${m.id}` : m.id)}${m.recommended ? ` (${esc(m.recommended)})` : ""}</option>`);
   if (!data.models.length || !data.models.some(m => m.id === current)) opts.unshift(`<option value="${esc(current)}">${esc(current)}</option>`);
   sel.innerHTML = opts.join("") + `<option value="__custom__">Other (type an id)…</option>`;
   if (!data.models.length && data.error) byId("director-key-hint").textContent = `Model list unavailable: ${data.error}`;
