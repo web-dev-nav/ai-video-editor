@@ -268,7 +268,7 @@ def _build_config(p: dict) -> dict:
     cfg["director"]["enabled"] = bool(d.get("enabled", False))
     cfg["director"]["provider"] = d.get("provider") or "anthropic"
     cfg["director"]["model"] = d.get("model") or DEFAULT_MODELS.get(cfg["director"]["provider"], "")
-    cfg["director"]["mode"] = d.get("mode") or "refine"
+    cfg["director"]["mode"] = d.get("mode") or "ai"
     cfg["director"]["instructions"] = d.get("instructions") or ""
 
     e = o.get("encoding", {})
@@ -598,7 +598,7 @@ def _finalize_keep(inp: str, options: dict, selected: list[dict]) -> list[dict]:
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
     from src.steps.edit_decisions import run as edit_decisions
-    from src.steps.ai_director import _intersect, _merge_touching, _sanitise
+    from src.steps.ai_director import _all_words, _sanitise, base_segments, finalize
     from src.utils.ffmpeg import probe_duration
 
     cache_file = _cache_path_for(inp)
@@ -609,13 +609,9 @@ def _finalize_keep(inp: str, options: dict, selected: list[dict]) -> list[dict]:
     total = float(probe_duration(Path(inp)))
     ctx = {"transcript": cache["transcript"], "speech_segments": cache["speech_segments"], "total_duration": total}
     ctx.update(edit_decisions(ctx, cfg))
+    mode = cfg["director"].get("mode", "ai")
     pad = float(cfg["director"].get("boundary_padding_sec", 0.15))
-    ranges = _sanitise(selected, total)
-    if cfg["director"].get("mode") == "full":
-        final = [{"start": max(0.0, r["start"] - pad), "end": min(total, r["end"] + pad)} for r in ranges]
-    else:
-        final = _intersect(ranges, ctx["keep_segments"], pad, total)
-    return _merge_touching(final)
+    return finalize(_sanitise(selected, total), base_segments(ctx, cfg, mode), _all_words(ctx["transcript"]), mode, pad, total)
 
 
 async def api_jobs_list(request: Request):

@@ -31,11 +31,13 @@ needed. Details in [`gui/README.md`](gui/README.md).
 
 ### AI Director
 
-An LLM reads the word-timestamped transcript plus *your* instructions
-("cut to 60 s, drop the tangent about the weather, open with the strongest line")
-and returns the pieces to keep, with a reason for every cut. You review the plan
-in the GUI — untick / restore pieces, ask for revisions — then render.
-Silence, filler and failed-take removal still apply on top ("refine" mode).
+An LLM edits the talk the way a person would: it reads the word-timestamped
+transcript (pauses marked) and removes fillers judged in context (any language),
+stutters, false starts, repeated sentences (keeping the best take), stalls and
+rambling — no word lists — plus whatever *you* ask for ("cut to 60 s, drop the
+tangent about the weather, open with the strongest line"). Every cut comes with a
+reason; you review the plan in the GUI, restore or drop pieces, ask for
+revisions, then render. Dead air is still trimmed by voice detection.
 
 Providers: **Anthropic** (`ANTHROPIC_API_KEY`), **OpenAI** (`OPENAI_API_KEY`),
 or **OpenRouter** (`OPENROUTER_API_KEY`). Model lists are fetched live from the

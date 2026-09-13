@@ -56,7 +56,7 @@ director:
   enabled: false          # AI Director: an LLM decides what content to keep from your instructions
   provider: anthropic     # anthropic | openai | openrouter (keys: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY)
   model: claude-opus-5    # provider-specific model id
-  mode: refine            # refine = choose within the automatic cut (silences/fillers stay removed); full = AI ranges as-is
+  mode: ai                # ai = the model judges every word (fillers, repeats, stalls) — no word lists; refine = model picks content on top of the rule-based cut; full = model ranges as-is
   instructions: ""        # e.g. "cut to under 60s, drop the tangent about the weather"
   boundary_padding_sec: 0.15
 

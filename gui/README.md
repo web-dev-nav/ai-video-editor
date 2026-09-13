@@ -8,15 +8,19 @@ It opens http://localhost:8765 in your browser (add `--no-browser` to skip that)
 Pick a video from your Windows Downloads/Videos/Desktop, adjust settings, press
 **Process video**. Output lands next to the input as `<name>_edited.mp4`.
 
-## AI Director
+## Two ways to edit
 
-Let Claude or ChatGPT decide *what content* to keep:
+**Auto** — fixed rules, offline: trims dead air (voice detection), removes words
+from the filler lists, drops takes marked "cut cut". Press *Edit video*.
 
-1. Header → **API keys** → pick Claude (Anthropic) or ChatGPT (OpenAI), paste the key.
-2. Pick a video, optionally press **Analyze / transcribe** to read the transcript.
-3. Write instructions in the AI Director box, press **Ask AI for a plan**.
-4. Review the plan (untick kept pieces / tick removed ones to restore), revise if
-   needed, then **Render this plan**.
+**AI editor** — Claude / ChatGPT reads the transcript and edits it like a person:
+fillers judged in context (any language), stutters, false starts, repeated
+sentences (best take kept), stalls, rambling — plus any instructions you type.
+
+1. Header → **API keys** → add a Claude (Anthropic) or ChatGPT (OpenAI) key.
+2. Pick a video, choose **AI editor**, optionally type instructions.
+3. **Ask AI for a plan** → review every cut (tick to restore, untick to drop),
+   ask for revisions → **Render this plan**.
 
 Speech detection + transcription are cached per input in `uploads/.cache/`, so
 re-planning and rendering only pay for the LLM call and the encode.
