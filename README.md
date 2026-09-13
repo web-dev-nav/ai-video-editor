@@ -41,8 +41,31 @@ revisions, then render. Dead air is still trimmed by voice detection.
 
 Providers: **Anthropic** (`ANTHROPIC_API_KEY`), **OpenAI** (`OPENAI_API_KEY`),
 **OpenRouter** (`OPENROUTER_API_KEY`), or **NVIDIA NIM** (`NVIDIA_API_KEY`, from
-[build.nvidia.com](https://build.nvidia.com) — Llama, Nemotron, DeepSeek, Mistral, Qwen…).
-Model lists are fetched live from the provider in the GUI.
+[build.nvidia.com](https://build.nvidia.com) — Nemotron, DeepSeek, Kimi, Mistral, Gemma…).
+Model lists are fetched live from the provider in the GUI; recommended models are
+starred and listed first.
+
+#### Which model should I pick?
+
+The job is: read a word-timestamped transcript (a 10-minute talk ≈ 15k tokens),
+judge the speech, and return exact JSON time ranges. That needs precise
+instruction-following and careful number copying more than raw size.
+
+| Tier | Model | Notes |
+|---|---|---|
+| **Default** | **Claude Sonnet 5** (`claude-sonnet-5`) | Best quality per dollar for this task. ≈ $0.02 per 1-minute clip, ≈ $0.10 per 20-minute talk. |
+| Hardest edits | **Claude Opus 5** (`claude-opus-5`) | Better judgement on messy speech, reordering, and Hindi/Hinglish. ≈ 2.5× the price. |
+| ChatGPT | `gpt-5` (full model, not mini/nano) | Comparable to Sonnet 5 if OpenAI credit is what you have. |
+| NVIDIA NIM | `nvidia/nemotron-3-super-120b-a12b`, `deepseek-ai/deepseek-v4-pro-0813` | Effectively free on trial credits; open models drift on timestamps more often, so review the plan carefully. Avoid models under ~30B. |
+| OpenRouter | the same Claude / GPT models | Only useful if you prefer a single bill. |
+
+Rule of thumb: start every video with **Sonnet 5**; if one revision doesn't fix
+the plan, switch that video to **Opus 5** — the transcript is cached, so switching
+costs only the new call. Avoid mini / nano / flash / haiku-class models: they are
+cheap but invent timestamps and cut mid-sentence, which costs more in re-runs.
+The two Claude models were verified on real footage; the others are ranked from
+their general capabilities — the cheapest way to check is to run the same clip
+through two models back-to-back and compare the plans in History.
 
 ```bash
 # plan only (cached analysis → re-planning is seconds)
@@ -59,7 +82,16 @@ Config lives under `director:` in `config.default.yml`.
 
 Select several clips in the GUI, order them, and they are joined (normalised to
 the first clip's size/fps) before the Auto or AI edit. Every AI call shows tokens
-in/out and the dollar cost; History keeps a session total.
+in/out and the dollar cost (prices live from OpenRouter's catalogue; NIM bills in
+credits, so it shows tokens only); History keeps a session total.
+
+### Whisper model downloads
+
+The transcription-model dropdown shows which models are already on disk and the
+real download size of the rest (`small` ≈ 486 MB, `medium` ≈ 1.5 GB, `large-v3`
+≈ 3.1 GB). **Download now** pre-fetches one with a progress bar; a first-use
+download inside a job shows its progress in the status line. On a CPU-only
+machine `small` or `medium` is the sweet spot.
 
 ### Other changes
 
@@ -67,7 +99,7 @@ in/out and the dollar cost; History keeps a session total.
   Filler lists are now read for every language key under `fillers.words`.
 - **Linux / WSL**: works with `libx264` (set `encoding.codec: libx264` to skip the VideoToolbox attempt).
 - Extra dependencies the upstream `pyproject.toml` doesn't list: `torchaudio` (needed by Silero VAD),
-  `mcp<2` (upstream targets the 1.x API), `anthropic`, `openai`.
+  `mcp<2` (upstream targets the 1.x API), `anthropic`, `openai`. All handled by `./install.sh`.
 
 ## Requirements
 
