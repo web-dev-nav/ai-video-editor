@@ -25,9 +25,41 @@ A local, open-source CLI tool that automatically edits talking-head videos using
 gui/run.sh            # opens http://localhost:8765
 ```
 
-Browse your videos (Windows drives are mapped under WSL), tweak every pipeline
-setting, watch live progress, preview the result, and copy chapters — no CLI
-needed. Details in [`gui/README.md`](gui/README.md).
+A video-editor style workspace (media panel · preview that skips the cuts ·
+inspector · multi-track timeline with **Video / Voiceover / Music** tracks · jobs
+drawer). Browse your videos (Windows drives are mapped under WSL), review and
+toggle every cut, add a **text-to-speech voiceover** and **background music**,
+render, and come back later — every edit is a **project** that reopens exactly
+as you left it. Details in [`gui/README.md`](gui/README.md).
+
+### Voiceover (text-to-speech), music & mixer
+
+- **Engines**: OpenAI (`gpt-4o-mini-tts` with delivery instructions — the most
+  natural), **Edge** (Microsoft neural voices, free, online, no key) and
+  **Kokoro** (free, offline, `uv pip install -e ".[tts-local]"`).
+- **Script**: type it, or let the AI rewrite the (edited) transcript into a
+  polished narration — one cue per sentence, aligned to the video. Cues can be
+  narrated *over* the original (ducked) or *replace* your voice.
+- Cues that run longer than their slot are sped up a little (≤ 1.3×) or flagged.
+- **Music**: any audio file, level, fades, start offset, loop, auto-ducking under
+  speech; a **mixer** for original / voiceover / music levels and loudness
+  normalisation. All mixing is a single ffmpeg pass (`src/steps/mix_audio.py`).
+- CLI: `ai-video-editor process in.mp4 --vo-cues cues.json -c my.yml` with a
+  `voiceover:` / `music:` / `mix:` section in the config.
+
+### Re-editable projects
+
+Every edit is saved as JSON under `uploads/.projects/` (autosave) and copied into
+the output bundle as `project.json` together with `analysis_cache.json`. **Open…**
+restores the source, the cuts, the plan, voiceover cues and music; change
+anything and press **Render** again — no re-transcription. A bundle folder can be
+imported on another machine.
+
+### Hook & chapters on any provider
+
+The smart hook and chapter generator now use the same provider/model picker as
+the AI editor (Claude, ChatGPT, OpenRouter, NVIDIA NIM) instead of requiring
+OpenRouter; their token usage is added to the job cost.
 
 ### AI Director
 
@@ -289,8 +321,14 @@ ai-video-editor process VIDEO [OPTIONS]
 | `--whisper-model, -m MODEL` | Whisper model size: tiny / base / small / medium / large / large-v3 |
 | `--lut PATH` | Path to a `.cube` LUT file for color grading |
 | `--output, -o PATH` | Output file path (default: `{input}_edited.mp4`) |
-| `--no-hook` | Skip smart hook generation (no OpenRouter call) |
-| `--no-chapters` | Skip YouTube chapter generation (no OpenRouter call) |
+| `--no-hook` | Skip smart hook generation (no LLM call) |
+| `--no-chapters` | Skip YouTube chapter generation (no LLM call) |
+| `--instructions, -i TEXT` | AI Director instructions (enables the director) |
+| `--skill NAME` | AI Director editing skill from `skills/` |
+| `--plan-only` | Stop after analysis and print the plan as JSON |
+| `--analysis-cache PATH` | Cache/reuse speech detection + transcript for this input |
+| `--keep-json PATH` | Render exactly these `[{start, end}]` segments |
+| `--vo-cues PATH` | Voiceover: JSON list of `{start, text, ...}` cues on the edited timeline |
 
 ### `info` — Inspect a video file
 
@@ -318,8 +356,12 @@ The default config lives in `config.default.yml`. Override any section with `--c
 | `fillers` | `enabled`, `min_filler_duration_sec`, `words.en`, `words.ru` |
 | `audio` | `enabled` (off by default), noise reduction and loudness settings |
 | `video` | `lut_path` |
-| `hook` | `enabled`, `duration_sec`, `model` |
-| `chapters` | `enabled`, `model` |
+| `hook` | `enabled`, `duration_sec`, `provider`, `model` (null = same as `director`) |
+| `chapters` | `enabled`, `provider`, `model` |
+| `director` | `enabled`, `provider`, `model`, `mode`, `skill`, `instructions` |
+| `voiceover` | `enabled`, `engine` (openai / edge / kokoro), `model`, `voice`, `speed`, `instructions`, `mix_mode` (narrate / replace), `fit`, `max_tempo`, `gain_db`, `duck_original_db`, `cues` / `cues_file` |
+| `music` | `enabled`, `path`, `gain_db`, `fade_in_sec`, `fade_out_sec`, `start_offset_sec`, `loop`, `duck`, `duck_db` |
+| `mix` | `original_gain_db`, `loudnorm`, `loudness_target` |
 | `encoding` | `codec`, `quality`, `audio_codec`, `audio_bitrate` |
 
 Example override — use a smaller Whisper model and enable audio enhancement:
@@ -370,7 +412,7 @@ Claude gets three tools: `process_video`, `video_info`, and `list_models`.
 
 | Variable | Description |
 |----------|-------------|
-| `OPENROUTER_API_KEY` | Required for smart hook and chapter generation. Set in a `.env` file next to `pyproject.toml` or export in your shell. Without it, AI enhancement steps are skipped gracefully. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys). |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `NVIDIA_API_KEY` | Keys for the AI editor, script writer, hook and chapters (any one provider is enough). `OPENAI_API_KEY` also enables OpenAI voices. Set them in a `.env` file next to `pyproject.toml` (the GUI's **API keys** dialog writes it) or export in your shell. Without a key the LLM steps are skipped gracefully. |
 | `OPENROUTER_REFERER` | Optional. Shown in your OpenRouter usage dashboard for attribution tracking. |
 
 ## License

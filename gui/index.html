@@ -4,995 +4,370 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Video Editor</title>
-<style>
-  :root {
-    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
-    --text: #e6e8ee; --muted: #8b93a7; --accent: #5b8cff; --accent2: #7c5cff;
-    --ok: #3ecf8e; --warn: #f5b043; --err: #ff5c5c; --radius: 10px;
-    font-family: -apple-system, "Segoe UI", Roboto, Inter, system-ui, sans-serif;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
-  header { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
-  header .spacer { flex: 1; }
-  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
-  .pill.ok { color: var(--ok); border-color: rgba(62,207,142,.4); }
-  .pill.warn { color: var(--warn); border-color: rgba(245,176,67,.4); }
-  .keys { display: flex; gap: 6px; }
-
-  main { display: grid; grid-template-columns: 330px minmax(400px, 1fr) 430px; gap: 16px; padding: 16px 20px; max-width: 1700px; margin: 0 auto; }
-  @media (max-width: 1250px) { main { grid-template-columns: 1fr 1fr; } #col-run { grid-column: 1 / -1; } }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } #col-run { grid-column: auto; } }
-
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
-  .card + .card { margin-top: 14px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .card h2 .step { display: inline-flex; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; align-items: center; justify-content: center; letter-spacing: 0; }
-
-  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-  button:hover { border-color: #3d4452; }
-  button.primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); border: none; font-weight: 600; padding: 12px 16px; font-size: 14px; width: 100%; }
-  button.primary:disabled { opacity: .45; cursor: not-allowed; }
-  button.danger { color: var(--err); }
-  button.small { padding: 4px 8px; font-size: 12px; }
-
-  input[type=text], input[type=number], input[type=password], select, textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font-size: 13px; font-family: inherit; }
-  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
-  textarea { min-height: 54px; resize: vertical; }
-  label.field { display: block; margin-bottom: 10px; }
-  label.field > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  .switch { display: flex; align-items: center; gap: 10px; margin: 8px 0; cursor: pointer; }
-  .switch input { width: 16px; height: 16px; accent-color: var(--accent); }
-  .hint { font-size: 12px; color: var(--muted); margin: 2px 0 8px; line-height: 1.45; }
-
-  details { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; background: var(--panel2); }
-  details summary { cursor: pointer; padding: 9px 12px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  details summary::before { content: "▸"; color: var(--muted); font-size: 11px; transition: transform .15s; }
-  details[open] summary::before { transform: rotate(90deg); }
-  details summary .tag { margin-left: auto; font-size: 11px; color: var(--muted); font-weight: 500; }
-  details .body { padding: 4px 12px 12px; }
-
-  /* mode chooser */
-  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .mode { border: 2px solid var(--border); border-radius: 10px; padding: 12px; cursor: pointer; background: var(--panel2); }
-  .mode:hover { border-color: #3d4452; }
-  .mode.active { border-color: var(--accent); background: rgba(91,140,255,.10); }
-  .mode.ai.active { border-color: var(--accent2); background: rgba(124,92,255,.12); }
-  .mode b { display: block; font-size: 14px; margin-bottom: 4px; }
-  .mode span { font-size: 12px; color: var(--muted); line-height: 1.4; display: block; }
-  .mode .badge { display: inline-block; font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: var(--bg); color: var(--muted); margin-top: 6px; }
-  .flow { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin: 10px 0 2px; flex-wrap: wrap; }
-  .flow b { color: var(--text); font-weight: 600; background: var(--bg); border: 1px solid var(--border); padding: 3px 8px; border-radius: 6px; }
-  .does { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 12px; margin: 8px 0 10px; }
-  .does div::before { content: "✓ "; color: var(--ok); }
-
-  /* file browser */
-  .roots { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .roots button { font-size: 12px; padding: 4px 9px; }
-  .crumb { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 8px; display: flex; gap: 6px; align-items: center; }
-  .list { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-  .list .item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; border-bottom: 1px solid #1c2029; }
-  .list .item:last-child { border-bottom: none; }
-  .list .item:hover { background: var(--panel2); }
-  .list .item.selected { background: rgba(91,140,255,.15); outline: 1px solid rgba(91,140,255,.5); }
-  .list .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .list .item .meta { color: var(--muted); font-size: 11px; }
-  .list .empty { padding: 14px; color: var(--muted); text-align: center; font-size: 13px; }
-  .drop { margin-top: 10px; border: 1px dashed var(--border); border-radius: 8px; padding: 10px; text-align: center; color: var(--muted); font-size: 12px; }
-  .drop.over { border-color: var(--accent); color: var(--text); background: rgba(91,140,255,.08); }
-  .drop input { display: none; }
-  video { width: 100%; border-radius: 8px; background: #000; margin-top: 10px; max-height: 240px; }
-  .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; font-size: 12px; margin-top: 8px; }
-  .kv div { min-width: 0; overflow-wrap: anywhere; }
-  .card, .clip, .plan-piece, .banner { min-width: 0; overflow-wrap: anywhere; }
-  .fit { margin-top: 10px; font-size: 12px; }
-  .fit .row-b { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .badge-ok, .badge-no, .badge-warn { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid; }
-  .badge-ok { color: var(--ok); border-color: rgba(62,207,142,.4); background: rgba(62,207,142,.08); }
-  .badge-no { color: var(--err); border-color: rgba(255,92,92,.4); background: rgba(255,92,92,.08); }
-  .badge-warn { color: var(--warn); border-color: rgba(245,176,67,.4); background: rgba(245,176,67,.08); }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
-  #alert { display: flex; gap: 12px; align-items: flex-start; padding: 10px 20px; font-size: 13px; line-height: 1.45; border-bottom: 1px solid; }
-  #alert.quota, #alert.auth { background: rgba(255,92,92,.14); border-color: rgba(255,92,92,.45); color: #ffc4c4; }
-  #alert.rate_limit, #alert.low { background: rgba(245,176,67,.14); border-color: rgba(245,176,67,.45); color: #ffe1a8; }
-  #alert.model, #alert.other, #alert.refusal { background: rgba(91,140,255,.12); border-color: rgba(91,140,255,.4); color: #cdd9ff; }
-  #alert b { font-weight: 700; }
-  #alert .x { margin-left: auto; background: none; border: none; color: inherit; font-size: 16px; padding: 0 4px; }
-  .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .files span { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .chips button { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; }
-  .kv div:nth-child(odd) { color: var(--muted); }
-  .path { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; word-break: break-all; }
-
-  /* progress + results */
-  .progress { height: 10px; background: var(--bg); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); margin: 10px 0 6px; }
-  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .4s; }
-  .progress.running > div { background-size: 200% 100%; background-image: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent)); animation: shimmer 1.6s linear infinite; }
-  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: 0 0; } }
-  .progress.done > div { background: var(--ok); }
-  .progress.error > div { background: var(--err); }
-  .status-line { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
-  .phases { display: flex; gap: 4px; margin-top: 8px; }
-  .phases span { flex: 1; text-align: center; font-size: 10.5px; padding: 4px 0; border-radius: 5px; background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
-  .phases span.active { color: var(--text); border-color: var(--accent); background: rgba(91,140,255,.15); }
-  .phases span.done { color: var(--ok); border-color: rgba(62,207,142,.35); }
-  .log { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; max-height: 220px; overflow: auto; white-space: pre-wrap; color: #b7bdcc; margin-top: 8px; }
-  .log .ev { color: var(--text); }
-  .log .noise { color: #5f6675; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
-  .stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  .stat b { display: block; font-size: 18px; font-weight: 650; }
-  .stat span { font-size: 11px; color: var(--muted); }
-  .banner { padding: 9px 12px; border-radius: 8px; font-size: 13px; margin-top: 10px; line-height: 1.45; }
-  .banner.err { background: rgba(255,92,92,.12); border: 1px solid rgba(255,92,92,.4); color: #ffb3b3; }
-  .banner.ok { background: rgba(62,207,142,.12); border: 1px solid rgba(62,207,142,.4); color: #b6f1d6; }
-  .banner.info { background: rgba(91,140,255,.10); border: 1px solid rgba(91,140,255,.35); color: #cdd9ff; }
-  .plan-summary { background: rgba(124,92,255,.10); border: 1px solid rgba(124,92,255,.35); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; margin-top: 10px; }
-  .plan-piece { display: flex; gap: 8px; align-items: flex-start; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; margin-bottom: 6px; background: var(--panel2); font-size: 12px; }
-  .plan-piece input { margin-top: 2px; accent-color: var(--accent); }
-  .plan-piece .t { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; white-space: nowrap; }
-  .plan-piece .why { color: var(--warn); font-size: 11px; margin-top: 2px; }
-  .plan-piece .why.ok { color: var(--ok); }
-  .plan-piece .txt { color: #cfd4e0; margin-top: 2px; line-height: 1.35; }
-  .plan-piece.removed { border-style: dashed; }
-  .plan-piece.removed .txt { text-decoration: line-through; text-decoration-color: rgba(255,92,92,.6); }
-  .plan-piece.removed input:checked ~ div .txt { text-decoration: none; }
-  .cats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .cats span { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
-  .transcript { max-height: 220px; overflow: auto; font-size: 12px; line-height: 1.45; }
-  .transcript div { padding: 3px 0; border-bottom: 1px solid #1c2029; }
-  .transcript .t { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; margin-right: 8px; }
-  h3.sub { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 14px 0 6px; }
-  .jobs .item { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; cursor: pointer; }
-  .jobs .item:last-child { border-bottom: none; }
-  .jobs .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-  .jobs .dot.running { background: var(--accent); box-shadow: 0 0 0 3px rgba(91,140,255,.25); }
-  .jobs .dot.done { background: var(--ok); } .jobs .dot.error { background: var(--err); } .jobs .dot.cancelled { background: var(--warn); }
-  .jobs .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  pre.chapters { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 12px; white-space: pre-wrap; margin: 8px 0 0; }
-  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
-  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; width: 440px; max-width: 95vw; }
-  dialog::backdrop { background: rgba(0,0,0,.6); }
-  .clip { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; margin-bottom: 6px; background: var(--panel2); font-size: 12px; }
-  .clip .n { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
-  .clip .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-  .clip .name:hover { text-decoration: underline; }
-  .clip .meta { color: var(--muted); font-size: 11px; }
-  .clip button { padding: 2px 6px; font-size: 11px; }
-  .list .item .add { padding: 1px 7px; font-size: 12px; }
-  .list .item.inseq { background: rgba(62,207,142,.08); }
-  .cost { font-size: 12px; color: var(--muted); margin-top: 8px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; line-height: 1.5; }
-  .cost b { color: var(--text); }
-  .totals { font-size: 12px; color: var(--muted); margin-bottom: 8px; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-  .totals b { color: var(--text); }
-  [hidden] { display: none !important; }
-</style>
+<link rel="stylesheet" href="/static/app.css?v=__V__">
 </head>
 <body>
-<header>
-  <h1>🎬 AI Video Editor</h1>
-  <span id="ffmpeg-pill" class="pill">ffmpeg</span>
-  <span class="keys" id="key-pills"></span>
-  <button class="small" id="btn-key">API keys</button>
-  <div class="spacer"></div>
-  <span class="pill" id="repo-pill"></span>
-</header>
+<div id="app">
+  <!-- ═══════════ top bar ═══════════ -->
+  <header id="topbar">
+    <span class="logo">🎬</span>
+    <input type="text" id="proj-name" placeholder="Untitled project" title="Project name — click to rename">
+    <span id="save-state"></span>
+    <button class="small ghost" id="btn-new" title="New project">New</button>
+    <button class="small ghost" id="btn-open" title="Open a saved project">Open</button>
+    <button class="small ghost" id="btn-save" title="Save now (projects autosave)">Save</button>
+    <div class="spacer"></div>
+    <span id="ffmpeg-pill" class="pill warn" hidden>ffmpeg missing</span>
+    <span class="keys" id="key-pills"></span>
+    <button class="small ghost" id="btn-key" title="API keys (Claude, OpenAI, OpenRouter, NVIDIA)">Keys</button>
+    <button class="primary" id="btn-run" disabled>Add a video to start</button>
+  </header>
+  <div id="alert" hidden><span id="alert-text"></span><button class="x" id="alert-close" title="Dismiss">✕</button></div>
 
-<div id="alert" hidden><span id="alert-text"></span><button class="x" id="alert-close" title="Dismiss">✕</button></div>
-
-<main>
-  <!-- ───────────── Column 1: Source ───────────── -->
-  <section id="col-source">
-    <div class="card">
-      <h2><span class="step">1</span> Pick a video</h2>
-      <div class="roots" id="roots"></div>
-      <div class="crumb"><button class="small" id="btn-up" title="Parent folder">↑</button><span id="crumb" style="flex:1"></span><button class="small" id="btn-add-all" title="Add every video in this folder to the sequence">+ all</button></div>
-      <div class="hint" style="margin:0 0 6px">Click a video to add it. Add several to combine them in order.</div>
-      <div class="list" id="list"></div>
-      <label class="field" style="margin-top:10px"><span>…or paste a path (Windows or WSL style)</span>
-        <input type="text" id="path-input" placeholder="C:\Users\Navjot\Downloads\clip.mp4"></label>
-      <div class="drop" id="drop">Drag &amp; drop a video here (copies it into <code>uploads/</code>)<br>
-        <label style="text-decoration:underline;cursor:pointer">or click to choose <input type="file" id="file-input" accept="video/*"></label>
-        <div id="upload-status"></div></div>
+  <!-- ═══════════ left panel ═══════════ -->
+  <aside id="left">
+    <div class="tabs">
+      <button data-tab="media" class="active">📁 Media</button>
+      <button data-tab="ai">✂️ Edit</button>
+      <button data-tab="voice">🎙 Voice</button>
+      <button data-tab="audio">🎵 Audio</button>
     </div>
-    <div class="card" id="preview-card" hidden>
-      <h2>Clips <span class="tag" id="clips-tag" style="margin-left:auto;font-size:11px;color:var(--muted);text-transform:none;letter-spacing:0"></span></h2>
-      <div id="clips"></div>
-      <div class="actions" style="margin-top:4px"><button class="small" id="btn-clear-clips">Clear all</button><span class="hint" id="clips-hint" style="margin:0"></span></div>
-      <video id="preview" controls preload="metadata"></video>
-      <div class="kv" id="info"></div>
-      <div class="fit" id="fit-source"></div>
-    </div>
-  </section>
 
-  <!-- ───────────── Column 2: How to edit ───────────── -->
-  <section id="col-settings">
-    <div class="card">
-      <h2><span class="step">2</span> How do you want to edit?</h2>
-      <div class="modes">
-        <div class="mode" data-mode="auto">
-          <b>⚙️ Auto</b>
-          <span>Fixed rules: trims dead air, deletes words from a filler list, drops takes marked with "cut cut".</span>
-          <span class="badge">offline · free · instant</span>
-        </div>
-        <div class="mode ai" data-mode="ai">
-          <b>✨ AI editor</b>
-          <span>Claude / ChatGPT reads the transcript and edits it like a person would: fillers, stutters, repeated sentences, stalls, rambling — plus any instructions you give.</span>
-          <span class="badge">needs an API key · shows you the plan first</span>
-        </div>
+    <!-- Media -->
+    <div class="pane" id="tab-media">
+      <div class="card">
+        <h2>Source <span class="tag" id="clips-tag"></span></h2>
+        <div id="clips"></div>
+        <div class="actions" id="clips-actions" hidden><button class="small ghost" id="btn-clear-clips">Clear</button><span class="hint" id="clips-hint" style="margin:0"></span></div>
+        <details class="quiet"><summary>File info &amp; platform fit</summary><div class="body"><div class="kv" id="info"></div><div class="fit" id="fit-source" style="margin-top:6px"></div></div></details>
       </div>
+      <div class="card">
+        <h2>Files <span class="tag"><button class="small ghost" id="btn-add-all" title="Add every video in this folder, in name order">+ all</button></span></h2>
+        <div class="roots" id="roots"></div>
+        <div class="crumb"><button class="small ghost" id="btn-up" title="Parent folder">↑</button><span id="crumb" style="flex:1"></span></div>
+        <div class="list" id="list"></div>
+        <details class="quiet"><summary>Paste a path or drop a file</summary><div class="body">
+          <input type="text" id="path-input" placeholder="C:\Users\you\Videos\clip.mp4 — press Enter" title="Windows or WSL path">
+          <div class="drop" id="drop">Drop a video here <label style="text-decoration:underline;cursor:pointer">or choose one<input type="file" id="file-input" accept="video/*"></label><div id="upload-status"></div></div>
+        </div></details>
+      </div>
+    </div>
 
-      <!-- AUTO panel -->
-      <div id="panel-auto">
-        <div class="flow">Flow: <b>Pick video</b> → <b>Edit video</b> → done. No review step.</div>
-        <div class="does"><div>Silence trimmed (voice detection)</div><div>Filler words from the lists below</div><div>"cut cut" takes removed</div><div>Repeated sentence starts removed</div></div>
-        <details>
-          <summary>Silence removal <span class="tag" id="tag-silence"></span></summary>
-          <div class="body"><div class="row">
-            <label class="field"><span>Min silence to remove (ms)</span><input type="number" id="silence.min_silence_ms" step="50"></label>
-            <label class="field"><span>Keep audio before/after speech (ms)</span><input type="number" id="silence.padding_ms" step="10"></label>
-            <label class="field"><span>Merge segments if gap &lt; (sec)</span><input type="number" id="silence.min_gap_sec" step="0.1"></label>
-            <label class="field"><span>Breathing room around cuts (sec)</span><input type="number" id="silence.padding_sec" step="0.1"></label>
-          </div><div class="hint">Lower "merge gap" and "breathing room" for tighter cuts; raise them for a more natural pace.</div></div>
-        </details>
-        <details>
-          <summary>Failed takes / restarts <span class="tag" id="tag-restarts"></span></summary>
-          <div class="body">
+    <!-- Edit (Auto / AI) -->
+    <div class="pane" id="tab-ai" hidden>
+      <div class="card">
+        <div class="modes">
+          <button class="mode" data-mode="auto" title="Fixed rules, offline: trims silence, deletes listed filler words, drops takes marked 'cut cut'">⚙️ Auto</button>
+          <button class="mode ai" data-mode="ai" title="Claude / ChatGPT reads the transcript and edits like a person — fillers, stumbles, repeats, plus your instructions">✨ AI editor</button>
+        </div>
+        <div id="panel-auto">
+          <div class="hint">Rule-based · offline · free</div>
+          <details><summary>Silence <span class="tag" id="tag-silence"></span></summary><div class="body"><div class="row">
+            <label class="field"><span>Min silence (ms)</span><input type="number" id="silence.min_silence_ms" step="50"></label>
+            <label class="field"><span>Keep around speech (ms)</span><input type="number" id="silence.padding_ms" step="10"></label>
+            <label class="field" title="Adjacent speech closer than this is not cut apart"><span>Merge gap (s)</span><input type="number" id="silence.min_gap_sec" step="0.1"></label>
+            <label class="field" title="Extra room before/after each cut"><span>Breathing room (s)</span><input type="number" id="silence.padding_sec" step="0.1"></label>
+          </div></div></details>
+          <details><summary>Failed takes <span class="tag" id="tag-restarts"></span></summary><div class="body">
             <label class="switch"><input type="checkbox" id="restarts.enabled"> Remove failed takes</label>
-            <label class="field"><span>Trigger phrases (comma-separated) — say one to mark a restart</span><input type="text" id="restarts.trigger_phrases"></label>
-            <label class="switch"><input type="checkbox" id="restarts.detect_repeated_starts"> Auto-detect repeated sentence starts</label>
-            <label class="field"><span>Drop isolated speech bursts shorter than (sec)</span><input type="number" id="restarts.max_burst_duration_sec" step="0.1"></label>
-          </div>
-        </details>
-        <details>
-          <summary>Filler words <span class="tag" id="tag-fillers"></span></summary>
-          <div class="body">
+            <label class="field" title="Say one of these to mark a restart"><span>Trigger phrases</span><input type="text" id="restarts.trigger_phrases"></label>
+            <label class="switch"><input type="checkbox" id="restarts.detect_repeated_starts"> Detect repeated sentence starts</label>
+            <label class="field"><span>Drop bursts shorter than (s)</span><input type="number" id="restarts.max_burst_duration_sec" step="0.1"></label>
+          </div></details>
+          <details><summary>Filler words <span class="tag" id="tag-fillers"></span></summary><div class="body">
             <label class="switch"><input type="checkbox" id="fillers.enabled"> Remove filler words</label>
             <label class="field"><span>English</span><textarea id="fillers.words_en"></textarea></label>
-            <label class="field"><span>Hindi (Devanagari or Hinglish)</span><textarea id="fillers.words_hi"></textarea></label>
+            <label class="field"><span>Hindi</span><textarea id="fillers.words_hi"></textarea></label>
             <label class="field"><span>Russian</span><textarea id="fillers.words_ru"></textarea></label>
-            <label class="field"><span>Ignore fillers shorter than (sec, 0 = remove all)</span><input type="number" id="fillers.min_filler_duration_sec" step="0.05"></label>
-          </div>
-        </details>
-      </div>
-
-      <!-- AI panel -->
-      <div id="panel-ai" hidden>
-        <div class="flow">Flow: <b>Pick video</b> → <b>Ask AI for a plan</b> → review the cuts → <b>Render</b>.</div>
-        <div class="does"><div>Silence trimmed (voice detection)</div><div>Fillers judged in context, any language</div><div>Stutters &amp; false starts</div><div>Repeated sentences → best take kept</div><div>Stalls &amp; rambling</div><div>Your instructions (length, topics, order)</div></div>
-        <div class="row">
-          <label class="field"><span>AI provider</span>
-            <select id="director.provider">
-              <option value="anthropic">Claude (Anthropic)</option>
-              <option value="openai">ChatGPT (OpenAI)</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="nvidia">NVIDIA NIM (build.nvidia.com)</option>
-            </select></label>
-          <label class="field"><span>Model <button class="small" id="btn-models" title="Reload model list" style="padding:0 6px;margin-left:4px">↻</button></span>
-            <select id="director.model-select"></select>
-            <input type="text" id="director.model" placeholder="custom model id" style="margin-top:6px" hidden></label>
+            <label class="field" title="0 = remove every detected filler"><span>Ignore shorter than (s)</span><input type="number" id="fillers.min_filler_duration_sec" step="0.05"></label>
+          </div></details>
+          <div class="actions"><button class="small ghost" id="btn-auto-oneshot" title="Skip the review: cut and render in one go">⚡ Quick render</button></div>
         </div>
-        <div class="hint" id="director-key-hint"></div>
-        <label class="field"><span>Editing skill <button class="small" id="btn-skills" title="Reload skills from the skills/ folder" style="padding:0 6px;margin-left:4px">↻</button> <button class="small" id="btn-skill-view" style="padding:0 6px">view brief</button></span>
-          <select id="director.skill"></select></label>
-        <div class="hint" id="skill-desc"></div>
-        <div class="hint">★ = recommended for this job. Start with <b>Claude Sonnet 5</b> (≈ $0.10 per 20-min talk); switch to <b>Opus 5</b> for messy speech or Hindi. Avoid mini/nano/flash-class models — they mangle timestamps.</div>
-        <div class="hint" style="margin-bottom:4px">Target length — click to add it to the instructions:</div>
-        <div class="chips" id="target-chips"></div>
-        <label class="field"><span>Instructions (optional — leave empty for a standard clean-up; you can refer to times, e.g. "remove 0:42–0:55")</span>
-          <textarea id="director.instructions" style="min-height:80px" placeholder="e.g. Keep it under 60 seconds. Drop the part about the weather. Open with the strongest line. Keep my jokes."></textarea></label>
-        <label class="switch"><input type="checkbox" id="ai.review" checked> Show me the plan before rendering (recommended)</label>
-        <details>
-          <summary>Advanced AI options <span class="tag" id="tag-ai-adv"></span></summary>
-          <div class="body">
-            <label class="field"><span>How the AI's cuts are applied</span>
-              <select id="director.mode">
-                <option value="ai">AI judges every word; dead air trimmed by voice detection (recommended)</option>
-                <option value="refine">AI picks content on top of the Auto rules (word lists still apply)</option>
-                <option value="full">Use the AI's ranges exactly, no silence trimming</option>
-              </select></label>
-            <button class="small" id="btn-analyze">Transcribe only (read the transcript before writing instructions)</button>
-          </div>
-        </details>
-      </div>
-
-      <details style="margin-top:6px">
-        <summary>Shared settings: transcription, output, audio, colour, encoding <span class="tag" id="tag-shared"></span></summary>
-        <div class="body">
+        <div id="panel-ai" hidden>
           <div class="row">
-            <label class="field"><span>Whisper model (transcription)</span><select id="whisper_model"></select></label>
-            <label class="field"><span>Language</span>
-              <select id="language"><option value="auto">Auto-detect</option><option value="en">English</option><option value="hi">Hindi (हिन्दी)</option><option value="ru">Russian</option></select></label>
+            <label class="field"><span>Provider</span>
+              <select id="director.provider"><option value="anthropic">Claude</option><option value="openai">ChatGPT</option><option value="openrouter">OpenRouter</option><option value="nvidia">NVIDIA NIM</option></select></label>
+            <label class="field"><span>Model <button class="small ghost" data-refresh="director" title="Reload model list" style="padding:0 4px">↻</button></span>
+              <select id="director.model-select"></select><input type="text" id="director.model" placeholder="custom model id" style="margin-top:5px" hidden></label>
           </div>
-          <div class="hint" id="model-hint"></div>
-          <div id="whisper-dl" class="cost" style="margin:0 0 10px" hidden>
-            <div style="display:flex;align-items:center;gap:10px"><span id="whisper-dl-text" style="flex:1"></span><button class="small" id="btn-whisper-dl">⬇ Download now</button></div>
-            <div class="progress" id="whisper-dl-bar" style="margin:8px 0 0" hidden><div></div></div>
-          </div>
-          <label class="field"><span>Output video</span><input type="text" id="output" placeholder="auto: {name}_edited.mp4 next to the input"></label>
-          <label class="switch"><input type="checkbox" id="bundle" checked> Save into its own folder with <code>transcript.txt</code>, <code>edit_notes.md</code>, <code>edit_plan.json</code></label>
-          <div class="row">
-            <label class="field"><span>Output format</span>
-              <select id="output_format">
-                <option value="source">Keep source size</option>
-                <option value="vertical-crop">Vertical 9:16 — crop (Shorts / Reels)</option>
-                <option value="vertical-blur">Vertical 9:16 — fit with blurred background</option>
-                <option value="square">Square 1:1</option>
-              </select></label>
-            <label class="field" id="focus-field"><span>Crop focus (where the speaker is)</span>
-              <select id="output_focus"><option value="center">Centre</option><option value="left">Left</option><option value="right">Right</option></select></label>
-          </div>
-          <div class="hint" id="format-hint"></div>
-          <details>
-            <summary>Audio enhancement <span class="tag" id="tag-audio"></span></summary>
-            <div class="body">
-              <label class="switch"><input type="checkbox" id="audio.enabled"> Enable audio chain (denoise → EQ → de-ess → compress → normalise)</label>
-              <label class="switch"><input type="checkbox" id="audio.denoise"> Denoise</label>
-              <div class="row3">
-                <label class="field"><span>Noise floor (dB)</span><input type="number" id="audio.denoise_level"></label>
-                <label class="field"><span>High-pass (Hz)</span><input type="number" id="audio.highpass_freq"></label>
-                <label class="field"><span>De-ess freq (Hz)</span><input type="number" id="audio.deess_freq"></label>
-                <label class="field"><span>De-ess gain (dB)</span><input type="number" id="audio.deess_gain"></label>
-                <label class="field"><span>Comp. threshold (dB)</span><input type="number" id="audio.compressor_threshold"></label>
-                <label class="field"><span>Comp. ratio</span><input type="number" id="audio.compressor_ratio" step="0.5"></label>
-                <label class="field"><span>Limiter (dB)</span><input type="number" id="audio.limiter_limit"></label>
-                <label class="field"><span>Loudness (LUFS)</span><input type="number" id="audio.loudness_target"></label>
-              </div>
-            </div>
-          </details>
-          <details>
-            <summary>Colour grade (LUT) <span class="tag" id="tag-lut"></span></summary>
-            <div class="body">
-              <label class="field"><span>LUT from <code>luts/</code></span><select id="lut-select"><option value="">None</option></select></label>
-              <label class="field"><span>…or path to a .cube file</span><input type="text" id="lut" placeholder="C:\path\to\look.cube"></label>
-            </div>
-          </details>
-          <details>
-            <summary>Hook opener &amp; YouTube chapters (OpenRouter) <span class="tag" id="tag-extras"></span></summary>
-            <div class="body">
-              <div class="hint" id="ai-hint"></div>
-              <label class="switch"><input type="checkbox" id="hook.enabled"> Smart hook — put the best moment at the start</label>
-              <div class="row">
-                <label class="field"><span>Hook length (sec)</span><input type="number" id="hook.duration_sec"></label>
-                <label class="field"><span>Hook LLM model</span><input type="text" id="hook.model"></label>
-              </div>
-              <label class="switch"><input type="checkbox" id="chapters.enabled"> Generate YouTube chapters</label>
-              <label class="field"><span>Chapters LLM model</span><input type="text" id="chapters.model"></label>
-            </div>
-          </details>
-          <details>
-            <summary>Encoding <span class="tag" id="tag-enc"></span></summary>
-            <div class="body">
-              <div class="row">
-                <label class="field"><span>Video encoder</span>
-                  <select id="encoding.codec"><option value="libx264">libx264 (software, works everywhere)</option><option value="h264_videotoolbox">h264_videotoolbox (macOS only)</option></select></label>
-                <label class="field"><span>Quality (0–100)</span><input type="number" id="encoding.quality" min="0" max="100"></label>
-              </div>
-              <label class="field"><span>Audio bitrate</span><input type="text" id="encoding.audio_bitrate"></label>
-            </div>
-          </details>
+          <div class="hint warn" id="director-key-hint" hidden></div>
+          <label class="field"><span>Style <button class="small ghost" id="btn-skill-view" title="Read the editing brief" style="padding:0 4px">ⓘ</button><button class="small ghost" id="btn-skills" title="Reload skills/" style="padding:0 4px">↻</button></span><select id="director.skill"></select></label>
+          <div class="hint" id="skill-desc"></div>
+          <label class="field"><span>Instructions <span class="opt">optional</span></span>
+            <textarea id="director.instructions" style="min-height:64px" placeholder="e.g. Keep it under 60 seconds. Drop the part about the weather."></textarea></label>
+          <details class="quiet"><summary>Target length</summary><div class="body"><div class="chips" id="target-chips"></div></div></details>
+          <details class="quiet"><summary>Advanced <span class="tag" id="tag-ai-adv"></span></summary><div class="body">
+            <label class="field"><span>Apply the AI's cuts</span>
+              <select id="director.mode"><option value="ai">AI judges every word (recommended)</option><option value="refine">On top of the Auto rules</option><option value="full">Exactly as returned, no silence trim</option></select></label>
+            <div class="actions"><button class="small ghost" id="btn-analyze" title="Transcribe without asking the AI">Transcribe only</button><button class="small ghost" id="btn-ai-oneshot" title="Skip the review: AI edit and render in one go">⚡ Quick render</button></div>
+          </div></details>
         </div>
-      </details>
-      <div class="actions" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:10px">
-        <button id="btn-save-preset" class="small">💾 Remember my settings</button>
-        <button id="btn-reset" class="small">Reset to defaults</button>
       </div>
-      <div class="hint" id="preset-hint" style="margin:6px 0 0"></div>
+      <div class="card" id="plan-card" hidden>
+        <h2>Cuts <span class="tag" id="plan-tag"></span></h2>
+        <div id="plan-box"></div>
+      </div>
     </div>
-  </section>
 
-  <!-- ───────────── Column 3: Run ───────────── -->
-  <section id="col-run">
-    <div class="card">
-      <h2><span class="step">3</span> Run</h2>
-      <button class="primary" id="btn-run" disabled>Select a video to start</button>
-      <div class="hint" id="run-hint" style="margin-top:8px"></div>
-      <div id="run-panel" hidden>
-        <div class="progress" id="progress"><div></div></div>
-        <div class="status-line"><span id="status-msg">—</span><span id="status-pct">0%</span></div>
-        <div class="phases" id="phases">
-          <span data-phase="combine" id="phase-combine" hidden>Combine</span><span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Extras</span><span data-phase="encode">Encode</span><span data-phase="finish">Finish</span>
+    <!-- Voiceover -->
+    <div class="pane" id="tab-voice" hidden>
+      <div class="card">
+        <label class="switch" style="margin:0" title="Off = nothing is added to the video; your cues are kept but not used"><input type="checkbox" id="vo.enabled"> Add a text-to-speech voiceover</label>
+      </div>
+      <div id="vo-body" hidden>
+      <div class="card">
+        <h2>Voice <span class="tag" id="vo-engine-note"></span></h2>
+        <div class="engine-pills" id="engine-pills"></div>
+        <div class="row" style="grid-template-columns: 1fr 72px">
+          <label class="field"><span>Voice <button class="small ghost" id="btn-voices" title="Reload voices" style="padding:0 4px">↻</button></span><select id="vo.voice"></select></label>
+          <label class="field"><span>Speed</span><input type="number" id="vo.speed" step="0.05" min="0.5" max="2"></label>
         </div>
+        <label class="field" id="vo-model-field" hidden><span>OpenAI model</span><select id="vo.model"></select></label>
+        <details class="quiet" id="vo-instr-field"><summary>Delivery style</summary><div class="body"><textarea id="vo.instructions" title="How the voice should sound (gpt-4o-mini-tts only)"></textarea></div></details>
+        <div class="actions"><button class="small" id="btn-vo-test">▶ Test voice</button><span class="hint" id="vo-test-note" style="margin:0"></span></div>
+        <audio id="vo-test-audio"></audio>
+      </div>
+      <div class="card">
+        <h2>Script</h2>
+        <textarea id="vo-script" placeholder="Type narration here, or let the AI write it from the transcript…"></textarea>
         <div class="actions">
-          <button class="small danger" id="btn-cancel">Cancel</button>
-          <button class="small" id="btn-toggle-log">Show log</button>
-          <button class="small" id="btn-show-config">Show config used</button>
+          <button class="small" id="btn-suggest" title="The AI rewrites the edited transcript as narration — one cue per sentence, in sync with the video">✨ Write from transcript</button>
+          <button class="small ghost" id="btn-script-add" title="One cue at the playhead">+ Cue</button>
+          <button class="small ghost" id="btn-script-split" title="One cue per sentence, starting at the playhead">+ Split</button>
         </div>
-        <div class="log" id="log" hidden></div>
-        <div id="result"></div>
+        <div class="hint" id="vo-suggest-note"></div>
+        <details class="quiet"><summary>Writing options</summary><div class="body">
+          <label class="field"><span>Style / instructions</span><textarea id="vo-style" placeholder="e.g. Friendlier and more confident. Keep it in Hindi."></textarea></label>
+          <label class="field"><span>Produce</span><select id="vo-suggest-mode"><option value="segments">Cues aligned to the video</option><option value="free">One continuous script</option></select></label>
+        </div></details>
+      </div>
+      <div class="card">
+        <h2>Cues <span class="tag" id="cues-tag"></span></h2>
+        <label class="field"><span>Mix</span><select id="vo.mix_mode" title="Narrate: your voice is lowered under each cue. Replace: your voice is muted while a cue plays"><option value="narrate">Narrate over my voice</option><option value="replace">Replace my voice</option></select></label>
+        <div class="hint warn" id="vo-hook-note" hidden>Cues play after the hook clip.</div>
+        <div id="cues"><div class="hint">No cues yet.</div></div>
+        <div class="actions"><button class="small ghost" id="btn-add-cue" title="Empty cue at the playhead">+ Empty</button><button class="small" id="btn-gen-all" title="Generate audio for every cue that needs it">🔊 Generate all</button><button class="small ghost danger" id="btn-clear-cues">Clear</button><span class="hint" id="vo-estimate" style="margin:0"></span></div>
+        <details class="quiet"><summary>Fitting &amp; ducking</summary><div class="body">
+          <div class="row">
+            <label class="field" title="What to do when a cue is longer than the time until the next cue"><span>Too long?</span><select id="vo.fit"><option value="tempo">Speed up a little</option><option value="overrun">Let it overrun</option><option value="none">Leave as is</option></select></label>
+            <label class="field"><span>Max speed-up (×)</span><input type="number" id="vo.max_tempo" step="0.05" min="1" max="2"></label>
+          </div>
+          <label class="field"><span>Duck my voice by (dB)</span><input type="number" id="vo.duck_original_db" step="1" max="0"></label>
+        </div></details>
+      </div>
       </div>
     </div>
-    <div class="card">
-      <h2>History</h2>
-      <div class="totals" id="totals" hidden></div>
-      <div class="jobs" id="jobs"><div class="hint">No jobs yet.</div></div>
+
+    <!-- Audio -->
+    <div class="pane" id="tab-audio" hidden>
+      <div class="card">
+        <h2>Music <span class="tag" id="music-tag"></span></h2>
+        <label class="switch"><input type="checkbox" id="music.enabled"> Background music</label>
+        <input type="text" id="music.path" placeholder="Pick a file below or paste a path" title="Audio file (mp3, wav, m4a, ogg, flac)">
+        <details class="quiet" open><summary>Browse audio files</summary><div class="body">
+          <div class="roots" id="music-roots"></div>
+          <div class="crumb"><button class="small ghost" id="btn-music-up">↑</button><span id="music-crumb" style="flex:1"></span></div>
+          <div class="list" id="music-list" style="max-height:150px"></div>
+          <div class="drop" id="music-drop">Drop an audio file <label style="text-decoration:underline;cursor:pointer">or choose one<input type="file" id="music-file-input" accept="audio/*"></label><div id="music-upload-status"></div></div>
+        </div></details>
+        <audio id="music-audio" preload="metadata"></audio>
+        <label class="field" style="margin-top:8px"><span>Level (dB)</span><div class="slider"><input type="range" id="music.gain_db-range" min="-40" max="6" step="1"><input type="number" id="music.gain_db" step="1"></div></label>
+        <div class="actions"><button class="small ghost" id="btn-music-play">▶ Preview</button><span class="hint" id="music-info" style="margin:0"></span></div>
+        <details class="quiet"><summary>Fades, offset &amp; ducking</summary><div class="body">
+          <div class="row3">
+            <label class="field"><span>Fade in (s)</span><input type="number" id="music.fade_in_sec" step="0.5" min="0"></label>
+            <label class="field"><span>Fade out (s)</span><input type="number" id="music.fade_out_sec" step="0.5" min="0"></label>
+            <label class="field" title="Skip this much of the music file"><span>Start at (s)</span><input type="number" id="music.start_offset_sec" step="1" min="0"></label>
+          </div>
+          <label class="switch"><input type="checkbox" id="music.loop"> Loop to fill the video</label>
+          <label class="switch"><input type="checkbox" id="music.duck"> Duck under speech</label>
+          <label class="field"><span>Duck by (dB)</span><input type="number" id="music.duck_db" step="1" max="0"></label>
+        </div></details>
+      </div>
+      <div class="card">
+        <h2>Mixer</h2>
+        <label class="field"><span>My voice (dB)</span><div class="slider"><input type="range" id="mix.original_gain_db-range" min="-30" max="12" step="1"><input type="number" id="mix.original_gain_db" step="1"></div></label>
+        <label class="field"><span>Voiceover (dB)</span><div class="slider"><input type="range" id="vo.gain_db-range" min="-30" max="12" step="1"><input type="number" id="vo.gain_db" step="1"></div></label>
+        <label class="switch" title="Normalise the final mix to a target loudness (−14 LUFS = YouTube)"><input type="checkbox" id="mix.loudnorm"> Normalise loudness to <input type="number" id="mix.loudness_target" step="1" style="width:64px;margin-left:4px"> LUFS</label>
+      </div>
+      <details><summary>Voice clean-up <span class="tag" id="tag-audio"></span></summary><div class="body">
+        <label class="switch" title="Denoise → EQ → de-ess → compress → normalise"><input type="checkbox" id="audio.enabled"> Enhance my voice</label>
+        <label class="switch"><input type="checkbox" id="audio.denoise"> Denoise</label>
+        <div class="row3">
+          <label class="field"><span>Noise floor (dB)</span><input type="number" id="audio.denoise_level"></label>
+          <label class="field"><span>High-pass (Hz)</span><input type="number" id="audio.highpass_freq"></label>
+          <label class="field"><span>De-ess (Hz)</span><input type="number" id="audio.deess_freq"></label>
+          <label class="field"><span>De-ess gain (dB)</span><input type="number" id="audio.deess_gain"></label>
+          <label class="field"><span>Comp. thr. (dB)</span><input type="number" id="audio.compressor_threshold"></label>
+          <label class="field"><span>Comp. ratio</span><input type="number" id="audio.compressor_ratio" step="0.5"></label>
+          <label class="field"><span>Limiter (dB)</span><input type="number" id="audio.limiter_limit"></label>
+          <label class="field"><span>Loudness (LUFS)</span><input type="number" id="audio.loudness_target"></label>
+        </div>
+      </div></details>
+    </div>
+  </aside>
+
+  <!-- ═══════════ centre: preview ═══════════ -->
+  <main id="center">
+    <div id="stage">
+      <div class="empty" id="stage-empty"><b>No video yet</b>Pick one under 📁 Media.</div>
+      <video id="preview" preload="metadata" hidden></video>
+    </div>
+    <div id="transport">
+      <button class="icon" id="btn-play" title="Play / pause (space)">▶</button>
+      <button class="icon" id="btn-stop" title="Back to start">⏮</button>
+      <span class="time"><b id="time-out">0:00.0</b> / <span id="time-total">0:00</span></span>
+      <div class="seg" id="preview-src"><button data-src="source" class="active" title="Plays the source and skips the cut parts">Source</button><button data-src="output" hidden title="Plays the last rendered file">Rendered</button></div>
+      <label class="switch" style="margin:0" title="Hear voiceover cues and music while previewing (approximate, no ducking)"><input type="checkbox" id="preview-mix" checked> 🔊</label>
+      <button class="small ghost" id="btn-roman" title="Show Hindi (Devanagari) as Roman letters — display only">अ→A</button>
+      <span class="note" id="preview-note"></span>
+    </div>
+    <div id="transcript"><span class="empty">Transcript</span></div>
+  </main>
+
+  <!-- ═══════════ right: inspector ═══════════ -->
+  <aside id="right">
+    <div class="head"><span id="insp-title">Export</span><span class="tag" id="insp-tag"></span></div>
+
+    <div class="sect" id="insp-default">
+      <label class="field"><span>Output file</span><input type="text" id="output" placeholder="auto: next to the input"></label>
+      <div class="row">
+        <label class="field"><span>Format</span><select id="output_format"><option value="source">Same as source</option><option value="vertical-crop">Vertical 9:16 · crop</option><option value="vertical-blur">Vertical 9:16 · blur</option><option value="square">Square 1:1</option></select></label>
+        <label class="field" id="focus-field"><span>Crop focus</span><select id="output_focus"><option value="center">Centre</option><option value="left">Left</option><option value="right">Right</option></select></label>
+      </div>
+      <div class="hint" id="format-hint"></div>
+      <label class="switch" title="Transcript, notes, plan and project file next to the video"><input type="checkbox" id="bundle" checked> Save into its own folder</label>
+      <details><summary>Transcription <span class="tag" id="tag-whisper"></span></summary><div class="body">
+        <div class="row">
+          <label class="field"><span>Whisper model</span><select id="whisper_model"></select></label>
+          <label class="field"><span>Language</span><select id="language"><option value="auto">Auto</option><option value="en">English</option><option value="hi">Hindi</option><option value="ru">Russian</option></select></label>
+        </div>
+        <div class="hint" id="model-hint"></div>
+        <div id="whisper-dl" class="whisper-box" hidden>
+          <div style="display:flex;align-items:center;gap:8px"><span id="whisper-dl-text" style="flex:1"></span><button class="small" id="btn-whisper-dl">⬇ Download</button></div>
+          <div class="progress" id="whisper-dl-bar" style="margin:6px 0 0" hidden><div></div></div>
+        </div>
+        <div class="hint warn" id="whisper-change-note" hidden>The next run transcribes again.</div>
+      </div></details>
+      <details><summary>Hook &amp; chapters <span class="tag" id="tag-extras"></span></summary><div class="body">
+        <label class="switch" title="Puts the most engaging moment first"><input type="checkbox" id="hook.enabled"> Smart hook</label>
+        <label class="field"><span>Hook length (s)</span><input type="number" id="hook.duration_sec"></label>
+        <div class="row">
+          <label class="field"><span>Provider</span><select id="hook.provider"><option value="">Same as editor</option><option value="anthropic">Claude</option><option value="openai">ChatGPT</option><option value="openrouter">OpenRouter</option><option value="nvidia">NVIDIA NIM</option></select></label>
+          <label class="field"><span>Model <button class="small ghost" data-refresh="hook" style="padding:0 4px">↻</button></span><select id="hook.model-select"></select><input type="text" id="hook.model" placeholder="custom id" style="margin-top:5px" hidden></label>
+        </div>
+        <label class="switch"><input type="checkbox" id="chapters.enabled"> YouTube chapters</label>
+        <div class="row">
+          <label class="field"><span>Provider</span><select id="chapters.provider"><option value="">Same as editor</option><option value="anthropic">Claude</option><option value="openai">ChatGPT</option><option value="openrouter">OpenRouter</option><option value="nvidia">NVIDIA NIM</option></select></label>
+          <label class="field"><span>Model <button class="small ghost" data-refresh="chapters" style="padding:0 4px">↻</button></span><select id="chapters.model-select"></select><input type="text" id="chapters.model" placeholder="custom id" style="margin-top:5px" hidden></label>
+        </div>
+        <div class="hint warn" id="extras-hint" hidden></div>
+      </div></details>
+      <details><summary>Colour (LUT) <span class="tag" id="tag-lut"></span></summary><div class="body">
+        <label class="field"><span>LUT from <code>luts/</code></span><select id="lut-select"><option value="">None</option></select></label>
+        <label class="field"><span>…or a .cube file</span><input type="text" id="lut" placeholder="C:\path\to\look.cube"></label>
+      </div></details>
+      <details><summary>Encoding <span class="tag" id="tag-enc"></span></summary><div class="body">
+        <div class="row">
+          <label class="field"><span>Encoder</span><select id="encoding.codec"><option value="libx264">libx264</option><option value="h264_videotoolbox">h264_videotoolbox (macOS)</option></select></label>
+          <label class="field"><span>Quality</span><input type="number" id="encoding.quality" min="0" max="100"></label>
+        </div>
+        <label class="field"><span>Audio bitrate</span><input type="text" id="encoding.audio_bitrate"></label>
+      </div></details>
+      <div class="actions" style="justify-content:flex-end">
+        <button class="small ghost" id="btn-save-preset" title="Use these settings for new projects">💾 Remember</button><button class="small ghost" id="btn-reset" title="Back to the defaults">Reset</button>
+      </div>
+      <div class="hint" id="preset-hint" hidden></div>
+    </div>
+
+    <div class="sect" id="insp-piece" hidden>
+      <span class="piece-kind" id="piece-kind"></span>
+      <div class="kv"><div>Source</div><div class="mono" id="piece-src"></div><div>In edit</div><div class="mono" id="piece-out"></div><div>Length</div><div id="piece-len"></div></div>
+      <div class="hint" id="piece-reason" style="margin-top:6px"></div>
+      <div class="quote" id="piece-text"></div>
+      <div class="actions"><button class="primary" id="btn-piece-toggle"></button><button class="small ghost" id="btn-piece-seek">⏵ Jump</button></div>
+    </div>
+
+    <div class="sect" id="insp-cue" hidden>
+      <label class="field"><span>Text</span><textarea id="cue.text" style="min-height:90px" title="What the voice reads — keep Hindi in Devanagari for Hindi voices"></textarea></label>
+      <div class="hint" id="cue-roman" hidden></div>
+      <div class="row">
+        <label class="field"><span>Start (s)</span><input type="number" id="cue.start" step="0.1" min="0"></label>
+        <label class="field" title="Optional: the cue must finish by this time"><span>End (s)</span><input type="number" id="cue.end" step="0.1" min="0" placeholder="auto"></label>
+      </div>
+      <div class="cost" id="cue-fit"></div>
+      <div class="actions"><button class="primary small" id="btn-cue-gen">🔊 Generate</button><button class="small ghost" id="btn-cue-play">▶ Play</button><button class="small ghost" id="btn-cue-seek">⏵ Jump</button><button class="small ghost danger" id="btn-cue-del">Delete</button></div>
+      <div class="hint" id="cue-status"></div>
+      <details class="quiet"><summary>Voice override</summary><div class="body">
+        <div class="row">
+          <label class="field"><span>Voice</span><select id="cue.voice"></select></label>
+          <label class="field"><span>Speed</span><input type="number" id="cue.speed" step="0.05" min="0.5" max="2" placeholder="default"></label>
+        </div>
+        <label class="field" id="cue-instr-field"><span>Delivery style</span><textarea id="cue.instructions" placeholder="default"></textarea></label>
+      </div></details>
+      <audio id="cue-audio"></audio>
+    </div>
+
+    <div class="sect" id="insp-music" hidden>
+      <span class="piece-kind kept" style="color:var(--music);border-color:var(--music)">Music</span>
+      <div class="kv" id="music-kv"></div>
+      <div class="actions"><button class="small ghost" id="btn-music-tab">Edit in 🎵 Audio</button></div>
+    </div>
+  </aside>
+
+  <!-- ═══════════ bottom: timeline + jobs ═══════════ -->
+  <section id="bottom">
+    <div id="timeline">
+      <div id="tl-head">
+        <div class="tools"><button id="tl-zoom-out" title="Zoom out">−</button><button id="tl-zoom-in" title="Zoom in">+</button><button id="tl-fit" title="Fit whole video">fit</button></div>
+        <div class="lbl">🎞 Video</div><div class="lbl vo">🎙 Voice</div><div class="lbl music">🎵 Music</div>
+      </div>
+      <div id="tl-scroll"><div id="tl-inner">
+        <div id="tl-ruler"></div>
+        <div class="track video" id="tl-video"></div>
+        <div class="track vo" id="tl-vo"></div>
+        <div class="track music" id="tl-music"></div>
+        <div id="tl-playhead"></div>
+      </div></div>
+    </div>
+    <div id="jobs-bar"><span id="jobs-toggle">▴ Jobs</span><div class="mini-bar" id="mini-bar"><div></div></div><span id="jobs-status">idle</span><span style="margin-left:auto" id="jobs-cost"></span></div>
+    <div id="jobs" hidden>
+      <div class="col">
+        <div id="run-panel" hidden>
+          <div class="progress" id="progress"><div></div></div>
+          <div class="status-line"><span id="status-msg">—</span><span id="status-pct">0%</span></div>
+          <div class="phases" id="phases"><span data-phase="combine" id="phase-combine" hidden>Combine</span><span data-phase="setup">Probe</span><span data-phase="analysis">Transcribe</span><span data-phase="assembly">Cut</span><span data-phase="ai_enhancement">Mix</span><span data-phase="encode">Encode</span><span data-phase="finish">Finish</span></div>
+          <div class="actions"><button class="small ghost danger" id="btn-cancel">Cancel</button><button class="small ghost" id="btn-toggle-log">Log</button><button class="small ghost" id="btn-show-config">Config</button></div>
+          <div class="log" id="log" hidden></div>
+          <div id="result"></div>
+        </div>
+        <div class="hint" id="run-empty">No job yet.</div>
+      </div>
+      <div class="col">
+        <h3 class="sub" style="margin-top:0">History</h3>
+        <div class="totals" id="totals" hidden></div>
+        <div class="jobs-list" id="jobs-list"><div class="hint">—</div></div>
+      </div>
     </div>
   </section>
-</main>
+</div>
 
 <dialog id="key-dialog">
-  <h3 style="margin-top:0">API keys</h3>
-  <p class="hint">Stored in <code>.env</code> inside the repo and only sent to the provider you pick. Claude / ChatGPT / NVIDIA NIM keys power the AI editor; OpenRouter also powers the hook &amp; chapters extras. NIM keys come from <a href="https://build.nvidia.com" target="_blank" style="color:var(--accent)">build.nvidia.com</a> (free trial credits).</p>
-  <label class="field"><span>Provider</span>
-    <select id="key-provider">
-      <option value="anthropic">Claude (Anthropic) — ANTHROPIC_API_KEY</option>
-      <option value="openai">ChatGPT (OpenAI) — OPENAI_API_KEY</option>
-      <option value="openrouter">OpenRouter — OPENROUTER_API_KEY</option>
-      <option value="nvidia">NVIDIA NIM — NVIDIA_API_KEY (nvapi-…)</option>
-    </select></label>
-  <input type="password" id="key-input" placeholder="paste key (leave empty to remove)">
-  <div class="actions" style="justify-content:flex-end"><button id="key-cancel" class="small">Cancel</button><button id="key-save" class="small">Save</button></div>
+  <h3>API keys</h3>
+  <p class="hint">Stored in <code>.env</code>; each key is only sent to its own provider. Any one of Claude / ChatGPT / NVIDIA powers the AI editor; the OpenAI key also enables OpenAI voices.</p>
+  <label class="field"><span>Provider</span><select id="key-provider"><option value="anthropic">Claude (Anthropic)</option><option value="openai">OpenAI (ChatGPT + voices)</option><option value="openrouter">OpenRouter</option><option value="nvidia">NVIDIA NIM</option></select></label>
+  <input type="password" id="key-input" placeholder="paste key (empty = remove)">
+  <div class="actions" style="justify-content:flex-end"><button id="key-cancel" class="small ghost">Cancel</button><button id="key-save" class="small primary">Save</button></div>
+</dialog>
+<dialog id="skill-dialog"><h3 id="skill-title"></h3><p class="hint" id="skill-path"></p><pre class="chapters" id="skill-text" style="max-height:60vh;overflow:auto"></pre><div class="actions" style="justify-content:flex-end"><button id="skill-close" class="small">Close</button></div></dialog>
+<dialog id="config-dialog"><h3>Config passed to the CLI</h3><pre class="chapters" id="config-text" style="max-height:60vh;overflow:auto"></pre><div class="actions" style="justify-content:flex-end"><button id="config-close" class="small">Close</button></div></dialog>
+<dialog id="open-dialog">
+  <h3>Open project</h3>
+  <div id="open-list" style="max-height:50vh;overflow:auto"></div>
+  <label class="field" style="margin-top:10px"><span>Import a <code>project.json</code> or its folder</span><input type="text" id="open-path" placeholder="C:\Users\you\Videos\talk_edited"></label>
+  <div class="actions" style="justify-content:flex-end"><button id="open-import" class="small ghost">Import</button><button id="open-close" class="small">Close</button></div>
 </dialog>
 
-<dialog id="skill-dialog">
-  <h3 style="margin-top:0" id="skill-title"></h3>
-  <p class="hint" id="skill-path"></p>
-  <pre class="chapters" id="skill-text" style="max-height:60vh;overflow:auto;white-space:pre-wrap"></pre>
-  <div class="actions" style="justify-content:flex-end"><button id="skill-close" class="small">Close</button></div>
-</dialog>
-
-<dialog id="config-dialog">
-  <h3 style="margin-top:0">Config passed to the CLI</h3>
-  <pre class="chapters" id="config-text" style="max-height:60vh;overflow:auto"></pre>
-  <div class="actions" style="justify-content:flex-end"><button id="config-close" class="small">Close</button></div>
-</dialog>
-
-<script>
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => Array.from(document.querySelectorAll(s));
-const byId = (id) => document.getElementById(id);
-const api = async (url, opts) => {
-  const r = await fetch(url, opts);
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || r.statusText);
-  return data;
-};
-const fmtSec = (s) => { s = Math.round(s); const m = Math.floor(s / 60); return m ? `${m}m ${s % 60}s` : `${s}s`; };
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const toWin = (p) => { const m = p && p.match(/^\/mnt\/([a-z])\/(.*)$/); return m ? `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, "\\")}` : null; };
-const MODEL_NOTES = {
-  tiny: "~32× realtime · basic accuracy", base: "~16× realtime · decent",
-  small: "~6× realtime · good — recommended starting point", medium: "~2× realtime · great",
-  large: "~1× realtime · excellent", "large-v2": "~1× realtime · improved large",
-  "large-v3": "~1× realtime · best accuracy (slowest on CPU)",
-};
-const fmtMB = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`;
-let SKILLS = [];
-async function loadSkills() {
-  try { const d = await api("/api/skills"); SKILLS = d.skills; SKILLS_DIR = d.dir; } catch { SKILLS = []; }
-  const sel = byId("director.skill"), cur = sel.value || (DEFAULTS.director && DEFAULTS.director.skill) || "clean";
-  sel.innerHTML = SKILLS.map(sk => `<option value="${esc(sk.id)}">${sk.emoji ? sk.emoji + " " : ""}${esc(sk.name)}</option>`).join("");
-  sel.value = SKILLS.some(sk => sk.id === cur) ? cur : (SKILLS[0] ? SKILLS[0].id : "");
-  updateSkillDesc();
-}
-let SKILLS_DIR = "";
-function updateSkillDesc() { const sk = SKILLS.find(x => x.id === byId("director.skill").value); byId("skill-desc").textContent = sk ? sk.description : ""; }
-let WHISPER = {};   // model -> status
-async function refreshWhisper() {
-  try { const d = await api("/api/whisper/models"); for (const m of d.models) WHISPER[m.model] = m; } catch {}
-  const sel = byId("whisper_model"), cur = sel.value;
-  sel.innerHTML = BOOT.models.map(m => { const w = WHISPER[m]; const tag = !w ? "" : w.downloaded ? ` — ${fmtMB(w.total)} ✓ ready` : w.state === "downloading" ? ` — downloading ${w.pct}%` : ` — ${fmtMB(w.total)} download on first use`; return `<option value="${m}">${m}${tag}</option>`; }).join("");
-  sel.value = cur || sel.value; updateWhisperBox();
-}
-let whisperPoll = null;
-function updateWhisperBox() {
-  const m = byId("whisper_model").value, w = WHISPER[m], box = byId("whisper-dl"), txt = byId("whisper-dl-text"), bar = byId("whisper-dl-bar"), btn = byId("btn-whisper-dl");
-  if (!w) { box.hidden = true; return; }
-  box.hidden = false; bar.hidden = true; btn.hidden = false;
-  if (w.downloaded) { txt.innerHTML = `✓ <b>${m}</b> is on this machine (${fmtMB(w.total)}). First load into memory can still take up to a minute.`; btn.hidden = true; }
-  else if (w.state === "downloading") { txt.innerHTML = `⬇ Downloading <b>${m}</b>: ${w.pct}% · ${fmtMB(w.bytes)} / ${fmtMB(w.total)}`; bar.hidden = false; bar.querySelector("div").style.width = w.pct + "%"; btn.hidden = true; }
-  else if (w.state === "error") { txt.innerHTML = `Download failed: ${esc(w.error || "")}`; }
-  else { txt.innerHTML = `<b>${m}</b> is not downloaded yet (${fmtMB(w.total)}). It downloads automatically on first use — or download it now so the first job isn't slow.`; }
-  if (w.state === "downloading" && !whisperPoll) whisperPoll = setInterval(async () => { const st = await api(`/api/whisper/status?model=${m}`); WHISPER[m] = st; updateWhisperBox(); if (st.state !== "downloading") { clearInterval(whisperPoll); whisperPoll = null; refreshWhisper(); } }, 1000);
-}
-const PROVIDER_NAMES = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", openrouter: "OpenRouter", nvidia: "NVIDIA NIM" };
-
-// Platform limits (as of 2025). Shorts/Reels also expect vertical 9:16.
-const PLATFORMS = [
-  { name: "YouTube Shorts", max: 180, vertical: true },
-  { name: "Instagram Reels", max: 180, vertical: true },
-  { name: "Facebook Reels", max: 90, vertical: true },
-  { name: "YouTube video", max: 12 * 3600, vertical: false },
-  { name: "Facebook video", max: 240 * 60, vertical: false },
-  { name: "Instagram feed video", max: 60 * 60, vertical: false },
-];
-const mmss = (s) => { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
-function fitHTML(durationSec, w, h, label) {
-  if (!durationSec) return "";
-  const cls = durationSec <= 60 ? "very short (≤ 1 min)" : durationSec <= 180 ? "short-form (≤ 3 min)" : durationSec <= 600 ? "medium (3–10 min)" : "long-form (> 10 min)";
-  const vertical = w && h ? h > w : null;
-  const badges = PLATFORMS.map(p => {
-    const ok = durationSec <= p.max;
-    const orient = p.vertical && vertical === false ? " · landscape (expects 9:16)" : "";
-    const c = !ok ? "badge-no" : orient ? "badge-warn" : "badge-ok";
-    return `<span class="${c}" title="max ${mmss(p.max)}">${ok ? "✓" : "✗"} ${p.name}${!ok ? ` (max ${mmss(p.max)})` : orient}</span>`;
-  }).join("");
-  return `<div><b>${label}:</b> ${mmss(durationSec)} — ${cls}${vertical === null ? "" : vertical ? " · vertical" : " · landscape"}</div><div class="row-b">${badges}</div>`;
-}
-let BOOT = null, DEFAULTS = null, clips = [], currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0, currentPlan = null;
-let editMode = localStorage.getItem("ave.mode") || "auto";
-
-// ─────────────── mode chooser ───────────────
-function setMode(m) {
-  editMode = m; localStorage.setItem("ave.mode", m);
-  $$(".mode").forEach(el => el.classList.toggle("active", el.dataset.mode === m));
-  byId("panel-auto").hidden = m !== "auto";
-  byId("panel-ai").hidden = m !== "ai";
-  updateRunButton();
-}
-$$(".mode").forEach(el => el.onclick = () => setMode(el.dataset.mode));
-
-function updateRunButton() {
-  const b = byId("btn-run"), h = byId("run-hint");
-  if (!clips.length) { b.disabled = true; b.textContent = "Select a video to start"; h.textContent = ""; return; }
-  const multi = clips.length > 1 ? ` (${clips.length} clips)` : "";
-  const busy = currentJob && ["running", "queued"].includes(currentJobStatus);
-  b.disabled = !!busy;
-  if (editMode === "auto") {
-    b.textContent = busy ? "Working…" : `▶ Edit video (Auto)${multi}`;
-    h.textContent = "Runs the fixed rules and renders straight away.";
-  } else {
-    const review = byId("ai.review").checked;
-    b.textContent = busy ? "Working…" : (review ? `✨ Ask AI for a plan${multi}` : `✨ AI edit & render${multi}`);
-    h.textContent = review ? "The AI proposes cuts; you review them here, then press Render." : "The AI's cuts are applied and rendered without review.";
-  }
-}
-byId("ai.review").addEventListener("change", updateRunButton);
-(function buildChips() {
-  const box = byId("target-chips");
-  const targets = [["YouTube Shorts ≤ 3:00", "Keep the final video under 3 minutes (YouTube Shorts).", true], ["Instagram Reel ≤ 3:00", "Keep the final video under 3 minutes (Instagram Reel).", true], ["Facebook Reel ≤ 1:30", "Keep the final video under 90 seconds (Facebook Reel).", true], ["≤ 60 s", "Keep the final video under 60 seconds.", true], ["Long-form, just clean up", "Keep the full length; only clean up fillers, stumbles and repeats.", false]];
-  for (const [label, text, vertical] of targets) {
-    const b = document.createElement("button"); b.textContent = label;
-    b.onclick = (e) => {
-      e.preventDefault();
-      const ta = byId("director.instructions"); ta.value = (ta.value.replace(/Keep the (final video|full length)[^\n]*\n?/g, "").trim() + "\n" + text).trim();
-      const src = clips[0] && clips[0].info.video;
-      if (vertical) { if (byId("output_format").value === "source") byId("output_format").value = "vertical-crop"; if (byId("director.skill").querySelector('option[value="shorts"]')) byId("director.skill").value = "shorts"; }
-      else { byId("output_format").value = "source"; }
-      updateFormatHint(); updateSkillDesc(); updateTags();
-      if (vertical && src && src.width > src.height) flash(b, "✓ vertical output set");
-    };
-    box.appendChild(b);
-  }
-})();
-
-// ─────────────── settings form <-> object ───────────────
-const csv = (s) => s.split(",").map(x => x.trim()).filter(Boolean);
-const num = (id) => parseFloat(byId(id).value);
-function applyDefaults(d) {
-  byId("whisper_model").value = d.whisper.model;
-  byId("language").value = d.whisper.language || "auto";
-  for (const k of ["min_silence_ms", "padding_ms", "min_gap_sec", "padding_sec"]) byId(`silence.${k}`).value = d.silence[k];
-  byId("restarts.enabled").checked = d.restarts.enabled;
-  byId("restarts.trigger_phrases").value = (d.restarts.trigger_phrases || []).join(", ");
-  byId("restarts.detect_repeated_starts").checked = d.restarts.detect_repeated_starts;
-  byId("restarts.max_burst_duration_sec").value = d.restarts.max_burst_duration_sec;
-  byId("fillers.enabled").checked = d.fillers.enabled;
-  byId("fillers.words_en").value = (d.fillers.words.en || []).join(", ");
-  byId("fillers.words_hi").value = (d.fillers.words.hi || []).join(", ");
-  byId("fillers.words_ru").value = (d.fillers.words.ru || []).join(", ");
-  byId("fillers.min_filler_duration_sec").value = d.fillers.min_filler_duration_sec;
-  byId("audio.enabled").checked = d.audio.enabled;
-  byId("audio.denoise").checked = d.audio.denoise;
-  for (const k of ["denoise_level", "highpass_freq", "deess_freq", "deess_gain", "compressor_threshold", "compressor_ratio", "limiter_limit", "loudness_target"]) byId(`audio.${k}`).value = d.audio[k];
-  byId("lut").value = d.video.lut_path || ""; byId("lut-select").value = "";
-  byId("hook.enabled").checked = d.hook.enabled; byId("hook.duration_sec").value = d.hook.duration_sec; byId("hook.model").value = d.hook.model;
-  byId("chapters.enabled").checked = d.chapters.enabled; byId("chapters.model").value = d.chapters.model;
-  const dd = d.director || {};
-  byId("director.provider").value = dd.provider || "anthropic";
-  byId("director.model").value = dd.model || BOOT.default_models[dd.provider || "anthropic"];
-  byId("director.mode").value = dd.mode || "ai";
-  if (dd.skill && byId("director.skill").querySelector(`option[value="${dd.skill}"]`)) byId("director.skill").value = dd.skill;
-  byId("director.instructions").value = dd.instructions || "";
-  byId("encoding.codec").value = d.encoding.codec; byId("encoding.quality").value = d.encoding.quality; byId("encoding.audio_bitrate").value = d.encoding.audio_bitrate;
-  if (typeof d.bundle === "boolean") byId("bundle").checked = d.bundle;
-  if (d.output_format) { byId("output_format").value = d.output_format.kind || "source"; byId("output_focus").value = d.output_format.focus || "center"; }
-  updateFormatHint();
-  updateTags();
-}
-function collectOptions() {
-  return {
-    whisper_model: byId("whisper_model").value,
-    language: byId("language").value,
-    silence: { min_silence_ms: num("silence.min_silence_ms"), padding_ms: num("silence.padding_ms"), min_gap_sec: num("silence.min_gap_sec"), padding_sec: num("silence.padding_sec") },
-    restarts: { enabled: byId("restarts.enabled").checked, trigger_phrases: csv(byId("restarts.trigger_phrases").value), detect_repeated_starts: byId("restarts.detect_repeated_starts").checked, max_burst_duration_sec: num("restarts.max_burst_duration_sec") },
-    fillers: { enabled: byId("fillers.enabled").checked, words_en: csv(byId("fillers.words_en").value), words_hi: csv(byId("fillers.words_hi").value), words_ru: csv(byId("fillers.words_ru").value), min_filler_duration_sec: num("fillers.min_filler_duration_sec") },
-    audio: { enabled: byId("audio.enabled").checked, denoise: byId("audio.denoise").checked, denoise_level: num("audio.denoise_level"), highpass_freq: num("audio.highpass_freq"), deess_freq: num("audio.deess_freq"), deess_gain: num("audio.deess_gain"), compressor_threshold: num("audio.compressor_threshold"), compressor_ratio: num("audio.compressor_ratio"), limiter_limit: num("audio.limiter_limit"), loudness_target: num("audio.loudness_target") },
-    lut: byId("lut").value.trim() || byId("lut-select").value || null,
-    hook: { enabled: byId("hook.enabled").checked, duration_sec: num("hook.duration_sec"), model: byId("hook.model").value.trim() },
-    chapters: { enabled: byId("chapters.enabled").checked, model: byId("chapters.model").value.trim() },
-    director: { enabled: editMode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, instructions: byId("director.instructions").value.trim() },
-    encoding: { codec: byId("encoding.codec").value, quality: num("encoding.quality"), audio_bitrate: byId("encoding.audio_bitrate").value.trim() },
-    bundle: byId("bundle").checked,
-    output_format: { kind: byId("output_format").value, focus: byId("output_focus").value },
-  };
-}
-function updateFormatHint() {
-  const k = byId("output_format").value, src = clips[0] && clips[0].info.video;
-  byId("focus-field").hidden = k !== "vertical-crop";
-  let t = "";
-  if (k === "vertical-crop") t = src && src.width > src.height ? `Landscape ${src.width}×${src.height} source → the sides are cropped away, keeping full height. Set Crop focus to where you sit in frame.` : "Source is already vertical/square — it will be scaled to 1080×1920.";
-  else if (k === "vertical-blur") t = "The whole landscape frame is kept, letterboxed over a blurred copy of itself — nothing is cut off, but the speaker appears smaller.";
-  else if (k === "square") t = "Centre crop to 1080×1080.";
-  byId("format-hint").textContent = t;
-}
-byId("output_format").addEventListener("change", updateFormatHint);
-function updateTags() {
-  const o = collectOptions();
-  byId("tag-silence").textContent = `${o.silence.min_silence_ms} ms · gap ${o.silence.min_gap_sec}s`;
-  byId("tag-restarts").textContent = o.restarts.enabled ? "on" : "off";
-  byId("tag-fillers").textContent = o.fillers.enabled ? `on · ${o.fillers.words_en.length + o.fillers.words_hi.length + o.fillers.words_ru.length} words` : "off";
-  byId("tag-audio").textContent = o.audio.enabled ? "on" : "off";
-  byId("tag-lut").textContent = o.lut ? o.lut.split(/[\\/]/).pop() : "none";
-  byId("tag-extras").textContent = [o.hook.enabled && "hook", o.chapters.enabled && "chapters"].filter(Boolean).join(" + ") || "off";
-  byId("tag-enc").textContent = `${o.encoding.codec} · q${o.encoding.quality}`;
-  byId("tag-ai-adv").textContent = { ai: "AI judges words", refine: "on top of Auto", full: "exact ranges" }[o.director.mode];
-  byId("tag-shared").textContent = `${o.whisper_model} · ${o.language}${o.output_format.kind !== "source" ? " · " + o.output_format.kind : ""}${o.audio.enabled ? " · audio" : ""}${o.lut ? " · LUT" : ""}`;
-  byId("model-hint").textContent = MODEL_NOTES[o.whisper_model] || "";
-  const prov = o.director.provider, hasKey = BOOT.keys[prov];
-  byId("director-key-hint").textContent = hasKey ? `${PROVIDER_NAMES[prov]} key found.` : `No ${PROVIDER_NAMES[prov]} key yet — add one with "API keys" in the header.`;
-  byId("director-key-hint").style.color = hasKey ? "var(--ok)" : "var(--warn)";
-  const needKey = (o.hook.enabled || o.chapters.enabled) && !BOOT.api_key_present;
-  byId("ai-hint").textContent = BOOT.api_key_present ? "OpenRouter key found — these call OpenRouter (fractions of a cent per video)." : "These need an OpenRouter key with credit; otherwise they are skipped.";
-  byId("ai-hint").style.color = needKey ? "var(--warn)" : "";
-}
-byId("whisper_model").addEventListener("change", updateWhisperBox);
-byId("btn-whisper-dl").onclick = async () => { const m = byId("whisper_model").value; WHISPER[m] = await api(`/api/whisper/download?model=${m}`, { method: "POST" }); updateWhisperBox(); };
-byId("col-settings").addEventListener("input", updateTags);
-byId("col-settings").addEventListener("change", updateTags);
-byId("lut-select").addEventListener("change", () => { if (byId("lut-select").value) byId("lut").value = ""; updateTags(); });
-byId("btn-reset").onclick = () => { applyDefaults(DEFAULTS); byId("ai.review").checked = true; localStorage.removeItem("ave.preset"); presetHint(); updateRunButton(); };
-byId("btn-save-preset").onclick = () => { localStorage.setItem("ave.preset", JSON.stringify({ ...collectOptions(), review: byId("ai.review").checked })); flash(byId("btn-save-preset"), "Saved ✓"); presetHint(); };
-function presetHint() { byId("preset-hint").textContent = localStorage.getItem("ave.preset") ? "Your saved settings are loaded automatically when this page opens (both modes, all sections)." : "Settings reset to defaults each time the page opens — press Remember to keep them."; }
-function flash(btn, text) { const t = btn.textContent; btn.textContent = text; setTimeout(() => btn.textContent = t, 1200); }
-function applyPreset(o) {
-  const d = JSON.parse(JSON.stringify(DEFAULTS));
-  d.whisper.model = o.whisper_model; d.whisper.language = o.language;
-  Object.assign(d.silence, o.silence); Object.assign(d.restarts, o.restarts);
-  d.fillers.enabled = o.fillers.enabled; d.fillers.min_filler_duration_sec = o.fillers.min_filler_duration_sec;
-  d.fillers.words = { en: o.fillers.words_en, ru: o.fillers.words_ru, hi: o.fillers.words_hi || [] };
-  Object.assign(d.audio, o.audio); d.video.lut_path = o.lut;
-  Object.assign(d.hook, o.hook); Object.assign(d.chapters, o.chapters); Object.assign(d.encoding, o.encoding);
-  d.director = Object.assign(d.director || {}, o.director || {});
-  d.bundle = o.bundle; d.output_format = o.output_format;
-  applyDefaults(d);
-  if (typeof o.review === "boolean") byId("ai.review").checked = o.review;
-}
-
-// ─────────────── model list ───────────────
-async function loadModels(force = false) {
-  const prov = byId("director.provider").value, sel = byId("director.model-select"), txt = byId("director.model");
-  const current = txt.value.trim() || BOOT.default_models[prov];
-  sel.innerHTML = `<option value="">Loading…</option>`; sel.disabled = true;
-  let data = { models: [] };
-  try { data = await api(`/api/models?provider=${prov}${force ? "&refresh=1" : ""}`); } catch (e) { data = { error: e.message, models: [] }; }
-  sel.disabled = false;
-  const opts = data.models.map(m => `<option value="${esc(m.id)}">${m.recommended ? "★ " : ""}${esc(m.name !== m.id ? `${m.name} — ${m.id}` : m.id)}${m.recommended ? ` (${esc(m.recommended)})` : ""}</option>`);
-  if (!data.models.length || !data.models.some(m => m.id === current)) opts.unshift(`<option value="${esc(current)}">${esc(current)}</option>`);
-  sel.innerHTML = opts.join("") + `<option value="__custom__">Other (type an id)…</option>`;
-  if (!data.models.length && data.error) byId("director-key-hint").textContent = `Model list unavailable: ${data.error}`;
-  sel.value = current; txt.value = current; txt.hidden = true;
-}
-byId("director.model-select").addEventListener("change", () => {
-  const sel = byId("director.model-select"), txt = byId("director.model");
-  if (sel.value === "__custom__") { txt.hidden = false; txt.focus(); } else { txt.hidden = true; txt.value = sel.value; }
-  updateTags();
-});
-byId("btn-models").onclick = (e) => { e.preventDefault(); loadModels(true); };
-byId("btn-skills").onclick = (e) => { e.preventDefault(); loadSkills(); flash(byId("btn-skills"), "✓"); };
-byId("director.skill").addEventListener("change", updateSkillDesc);
-byId("btn-skill-view").onclick = (e) => { e.preventDefault(); const sk = SKILLS.find(x => x.id === byId("director.skill").value); if (!sk) return; byId("skill-title").textContent = `${sk.emoji || ""} ${sk.name}`; byId("skill-path").textContent = `${SKILLS_DIR}/${sk.id}.md — edit the file or add your own, then press ↻`; byId("skill-text").textContent = sk.body; byId("skill-dialog").showModal(); };
-byId("skill-close").onclick = () => byId("skill-dialog").close();
-byId("director.provider").addEventListener("change", () => { byId("director.model").value = BOOT.default_models[byId("director.provider").value]; updateTags(); loadModels(); });
-
-// ─────────────── file browser ───────────────
-let cwd = null;
-async function browse(path) {
-  let data;
-  try { data = await api(`/api/browse?path=${encodeURIComponent(path)}`); }
-  catch (e) { byId("list").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  cwd = data;
-  byId("crumb").textContent = data.win_path || data.path;
-  byId("btn-up").disabled = !data.parent;
-  const list = byId("list"); list.innerHTML = "";
-  for (const d of data.dirs) { const el = document.createElement("div"); el.className = "item"; el.innerHTML = `<span>📁</span><span class="name">${esc(d.name)}</span>`; el.onclick = () => browse(d.path); list.appendChild(el); }
-  for (const f of data.files) {
-    const inseq = clips.some(c => c.path === f.path);
-    const el = document.createElement("div"); el.className = "item" + (inseq ? " inseq" : "");
-    el.innerHTML = `<span>🎞️</span><span class="name" title="${esc(f.name)}">${esc(f.name)}</span><span class="meta">${f.size_mb} MB</span><button class="add" title="${inseq ? "Remove from sequence" : "Add to sequence"}">${inseq ? "✓" : "+"}</button>`;
-    el.onclick = () => inseq ? removeClip(f.path) : addClip(f.path); list.appendChild(el);
-  }
-  if (!data.dirs.length && !data.files.length) list.innerHTML = `<div class="empty">No videos or folders here.</div>`;
-  localStorage.setItem("ave.cwd", data.path);
-}
-byId("btn-up").onclick = () => cwd && cwd.parent && browse(cwd.parent);
-byId("btn-add-all").onclick = async () => { if (!cwd) return; for (const f of cwd.files.slice().sort((a, b) => a.name.localeCompare(b.name))) if (!clips.some(c => c.path === f.path)) await addClip(f.path, true); renderClips(); browse(cwd.path); };
-byId("path-input").addEventListener("change", () => { const v = byId("path-input").value.trim(); if (v) { addClip(v); byId("path-input").value = ""; } });
-
-async function addClip(path, quiet = false) {
-  if (clips.some(c => c.path === path || c.path === path.replace(/\\/g, "/"))) return;
-  let info;
-  try { info = await api(`/api/info?path=${encodeURIComponent(path)}`); }
-  catch (e) { alert("Could not read that file: " + e.message); return; }
-  if (clips.some(c => c.path === info.file)) return;
-  clips.push({ path: info.file, info });
-  showPreview(clips[clips.length - 1]);
-  if (!quiet) { renderClips(); if (cwd) browse(cwd.path); }
-}
-function removeClip(path) { clips = clips.filter(c => c.path !== path); renderClips(); if (cwd) browse(cwd.path); }
-function moveClip(i, d) { const j = i + d; if (j < 0 || j >= clips.length) return; [clips[i], clips[j]] = [clips[j], clips[i]]; renderClips(); }
-byId("btn-clear-clips").onclick = () => { clips = []; renderClips(); if (cwd) browse(cwd.path); };
-function showPreview(c) {
-  const info = c.info;
-  byId("preview").src = `/api/media?path=${encodeURIComponent(info.file)}`;
-  byId("info").innerHTML = [
-    ["File", esc(info.win_path || info.file)],
-    ["Duration", fmtSec(info.duration_sec)], ["Size", `${info.size_mb} MB`],
-    ["Video", info.video ? `${info.video.codec} · ${info.video.width}×${info.video.height} · ${info.video.fps} fps` : "—"],
-    ["Audio", info.audio ? `${info.audio.codec} · ${info.audio.sample_rate} Hz · ${info.audio.channels} ch` : "— (no audio track!)"],
-  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
-}
-function renderClips() {
-  const card = byId("preview-card"), box = byId("clips");
-  card.hidden = !clips.length;
-  const total = clips.reduce((a, c) => a + (c.info.duration_sec || 0), 0);
-  byId("clips-tag").textContent = clips.length ? `${clips.length} clip${clips.length > 1 ? "s" : ""} · ${fmtSec(total)}` : "";
-  byId("clips-hint").textContent = clips.length > 1 ? "Clips are joined in this order (first clip's size/fps), then edited as one video." : "";
-  box.innerHTML = "";
-  clips.forEach((c, i) => {
-    const el = document.createElement("div"); el.className = "clip";
-    el.innerHTML = `<span class="n">${i + 1}</span><span class="name" title="${esc(c.info.win_path || c.path)}">${esc(c.path.split("/").pop())}</span><span class="meta">${fmtSec(c.info.duration_sec)}</span>
-      <button title="Move up" ${i === 0 ? "disabled" : ""}>↑</button><button title="Move down" ${i === clips.length - 1 ? "disabled" : ""}>↓</button><button title="Remove" class="danger">✕</button>`;
-    el.querySelector(".name").onclick = () => showPreview(c);
-    const [up, down, rm] = el.querySelectorAll("button");
-    up.onclick = () => moveClip(i, -1); down.onclick = () => moveClip(i, 1); rm.onclick = () => removeClip(c.path);
-    box.appendChild(el);
-  });
-  if (clips.length) {
-    const f = clips[0].info, base = (f.win_path || f.file).replace(/\.[^.]+$/, "");
-    byId("output").value = base + (clips.length > 1 ? "_combined_edited.mp4" : "_edited.mp4");
-    byId("fit-source").innerHTML = fitHTML(total, f.video && f.video.width, f.video && f.video.height, clips.length > 1 ? "Combined source" : "Source");
-    updateFormatHint();
-  }
-  const key = clips.map(c => c.path).join("|");
-  if (currentPlan && currentPlan.key !== key) { currentPlan = null; byId("result").innerHTML = ""; }
-  updateRunButton();
-}
-
-const drop = byId("drop");
-["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
-byId("file-input").addEventListener("change", e => { const f = e.target.files[0]; if (f) upload(f); });
-async function upload(file) {
-  const st = byId("upload-status"); st.textContent = `Uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`;
-  try {
-    const r = await api(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: "PUT", body: file });
-    st.textContent = `Uploaded → uploads/${r.name}`;
-    await browse(BOOT.roots.find(x => x.label.startsWith("Uploads")).path);
-    addClip(r.path);
-  } catch (e) { st.textContent = "Upload failed: " + e.message; }
-}
-
-// ─────────────── running jobs ───────────────
-async function submit(mode, extra = {}) {
-  if (!clips.length) return;
-  const body = { mode, inputs: clips.map(c => c.path), input: clips[0].path, output: byId("output").value.trim(), options: collectOptions(), ...extra };
-  const usesAI = mode === "plan" || (mode === "process" && body.options.director.enabled);
-  if (usesAI && !BOOT.keys[body.options.director.provider]) {
-    alert(`No ${PROVIDER_NAMES[body.options.director.provider]} API key set. Add one via "API keys" in the header.`); return;
-  }
-  try {
-    const job = await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    watchJob(job.id); refreshJobs();
-  } catch (e) { alert(e.message); }
-}
-byId("btn-run").onclick = () => {
-  if (editMode === "auto") submit("process");
-  else if (byId("ai.review").checked) submit("plan");
-  else submit("process");
-};
-byId("btn-analyze").onclick = () => submit("analyze");
-byId("btn-cancel").onclick = async () => { if (currentJob) await api(`/api/jobs/${currentJob}/cancel`, { method: "POST" }); };
-byId("btn-toggle-log").onclick = () => { const l = byId("log"); l.hidden = !l.hidden; byId("btn-toggle-log").textContent = l.hidden ? "Show log" : "Hide log"; };
-byId("btn-show-config").onclick = async () => { if (!currentJob) return; byId("config-text").textContent = await (await fetch(`/api/jobs/${currentJob}/config`)).text(); byId("config-dialog").showModal(); };
-byId("config-close").onclick = () => byId("config-dialog").close();
-
-function watchJob(id) {
-  currentJob = id; seenEvents = 0; currentJobStatus = "queued";
-  byId("run-panel").hidden = false; byId("result").innerHTML = ""; byId("log").innerHTML = "";
-  byId("progress").className = "progress"; $("#progress > div").style.width = "0%";
-  $$("#phases span").forEach(s => s.className = "");
-  if (pollTimer) clearInterval(pollTimer);
-  poll(); pollTimer = setInterval(poll, 1000);
-  updateRunButton();
-}
-async function poll() {
-  if (!currentJob) return;
-  let j;
-  try { j = await api(`/api/jobs/${currentJob}?since=${seenEvents}`); } catch { return; }
-  currentJobStatus = j.status;
-  const log = byId("log");
-  for (const ev of j.events) { const d = document.createElement("div"); d.className = "ev"; d.textContent = `[${ev.t}s] ${ev.phase}/${ev.step} ${Math.round(ev.progress * 100)}% — ${ev.message}`; log.appendChild(d); }
-  seenEvents = j.event_count;
-  const noise = log.querySelector(".noise") || log.appendChild(Object.assign(document.createElement("div"), { className: "noise" }));
-  noise.textContent = j.log.filter(l => !l.startsWith("{")).slice(-60).join("\n");
-  log.scrollTop = log.scrollHeight;
-  const last = j.events.length ? j.events[j.events.length - 1] : null;
-  if (last) byId("status-msg").textContent = last.message;
-  if (j.status === "queued") byId("status-msg").textContent = "Waiting for the previous job to finish…";
-  byId("status-pct").textContent = `${Math.round(j.status === "done" ? 100 : j.overall)}% · ${fmtSec(j.elapsed)}`;
-  $("#progress > div").style.width = `${j.status === "done" ? 100 : j.overall}%`;
-  byId("progress").classList.toggle("running", j.status === "running");
-  byId("phase-combine").hidden = !(j.inputs && j.inputs.length > 1);
-  const order = ["combine", "setup", "analysis", "assembly", "ai_enhancement", "encode", "finish"];
-  const cur = last ? (last.phase === "ai" ? "ai_enhancement" : last.phase) : null;
-  $$("#phases span").forEach(s => { const i = order.indexOf(s.dataset.phase), c = order.indexOf(cur); s.className = j.status === "done" ? "done" : (i < c ? "done" : i === c ? "active" : ""); });
-  byId("btn-cancel").disabled = !(j.status === "queued" || j.status === "running");
-  updateRunButton();
-  if (["done", "error", "cancelled"].includes(j.status)) {
-    clearInterval(pollTimer); pollTimer = null;
-    byId("progress").classList.add(j.status === "done" ? "done" : "error");
-    renderResult(j); refreshJobs(); refreshWhisper();
-  }
-}
-
-const usd = (x) => x == null ? "—" : (x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(3)}`);
-function costLine(c) {
-  if (!c) return "";
-  const price = c.cost_total != null
-    ? `<b>${usd(c.cost_in)}</b> in + <b>${usd(c.cost_out)}</b> out = <b>${usd(c.cost_total)}</b> <span title="${esc(c.price_source || "")}">(${c.price_in_per_m}/${c.price_out_per_m} $ per 1M · ${esc(c.price_source || "")})</span>`
-    : `price unknown for this model`;
-  return `<div class="cost">🧾 ${esc(c.model || c.provider)}${c.carried ? " (plan cost, no new call)" : ""}: <b>${c.input_tokens.toLocaleString()}</b> tokens in · <b>${c.output_tokens.toLocaleString()}</b> out · ${price}</div>`;
-}
-const ALERT_TEXT = {
-  quota: (p) => `<b>Model limit reached — ${p} credits or quota are exhausted.</b> Top up the account, or switch provider/model in the AI editor panel and ask again (the transcript is cached, nothing is lost).`,
-  rate_limit: (p) => `<b>${p} is rate-limiting you.</b> Wait a minute and press Ask AI again, or switch to another provider.`,
-  auth: (p) => `<b>${p} rejected the API key.</b> Check it under API keys (header) — it may be missing, mistyped, revoked, or lack permission.`,
-  model: (p) => `<b>${p} does not serve the selected model any more.</b> Pick another one from the Model dropdown (press ↻ to refresh the list).`,
-  refusal: (p) => `<b>${p} declined this request.</b> Try a different model or rephrase the instructions.`,
-};
-function showAlert(kind, html) { const a = byId("alert"); a.className = kind; byId("alert-text").innerHTML = html; a.hidden = false; }
-byId("alert-close").onclick = () => { byId("alert").hidden = true; };
-function renderResult(j) {
-  const r = j.result, box = byId("result");
-  if (j.status === "cancelled") { box.innerHTML = `<div class="banner err">Cancelled.</div>`; return; }
-  if (j.status === "error") {
-    const prov = PROVIDER_NAMES[collectOptions().director.provider] || "The provider";
-    if (j.error_kind && ALERT_TEXT[j.error_kind]) showAlert(j.error_kind, ALERT_TEXT[j.error_kind](prov));
-    box.innerHTML = `<div class="banner err"><b>Failed${j.error_kind ? ` (${j.error_kind.replace("_", " ")})` : ""}:</b> ${esc((j.error || "unknown error").replace(/^\s*AI Director failed: /, ""))}<br><span class="hint">Open the log for details.</span></div>`;
-    byId("log").hidden = false; byId("btn-toggle-log").textContent = "Hide log"; return;
-  }
-  if (r.status === "plan") { renderPlan(j); return; }
-  const saved = r.duration_original_sec - r.duration_edited_sec, winOut = toWin(r.output_video), winDir = r.output_folder && toWin(r.output_folder);
-  box.innerHTML = `
-    <div class="banner ok">Done in ${fmtSec(r.processing_time_sec)} — ${r.output_folder ? `saved in folder<br><span class="path">${esc(winDir || r.output_folder)}</span><div class="files">${(r.bundle_files || []).map(f => `<span>${esc(f)}</span>`).join("")}</div>` : `saved to<br><span class="path">${esc(winOut || r.output_video)}</span>`}
-      ${r.output_width ? `<div class="hint" style="margin:6px 0 0">Output: ${r.output_width}×${r.output_height}${r.output_height > r.output_width ? " · vertical" : r.output_width === r.output_height ? " · square" : " · landscape"}</div>` : ""}
-      ${r.format_error ? `<div class="hint" style="color:var(--warn)">Format conversion failed: ${esc(r.format_error)} — saved at source size.</div>` : ""}</div>
-    ${r.director_plan ? `<div class="plan-summary"><b>AI editor${r.director_plan.skill_name ? ` · ${esc(r.director_plan.skill_name)}` : ""}:</b> ${esc(r.director_plan.summary || "")}</div>` : ""}
-    <div class="stats">
-      <div class="stat"><b>${fmtSec(r.duration_original_sec)} → ${fmtSec(r.duration_edited_sec)}</b><span>duration (−${saved.toFixed(1)}s, ${Math.round(saved / r.duration_original_sec * 100)}%)</span></div>
-      ${r.director_plan ? `<div class="stat"><b>${r.director_plan.removed.length}</b><span>AI cuts</span></div><div class="stat"><b>${r.director_plan.keep.length}</b><span>pieces kept</span></div>`
-        : `<div class="stat"><b>${r.fillers_removed}</b><span>filler words cut</span></div><div class="stat"><b>${r.restarts_removed}</b><span>failed takes cut</span></div>`}
-    </div>
-    ${costLine(j.cost)}
-    <div class="fit">${fitHTML(r.duration_edited_sec, r.output_width || (clips[0] && clips[0].info.video && clips[0].info.video.width), r.output_height || (clips[0] && clips[0].info.video && clips[0].info.video.height), "Edited video")}</div>
-    <video controls preload="metadata" src="/api/media?path=${encodeURIComponent(r.output_video)}"></video>
-    ${r.continue_ready ? `<div class="actions"><button class="primary" id="btn-continue">✂ Keep editing this result</button></div>
-      <div class="hint">Loads the edited video as the new source with its transcript carried over — no re-transcription. Then tell the AI what else to cut (e.g. "remove the part about pricing" or "cut 0:42–0:55").</div>` : ""}
-    ${r.chapters_text ? `<h3 class="sub">YouTube chapters</h3><pre class="chapters">${esc(r.chapters_text)}</pre><div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(r.chapters_text)});flash(this,'Copied ✓')">Copy chapters</button></div>` : ""}
-    <div class="actions"><button class="small" onclick="navigator.clipboard.writeText(${JSON.stringify(winDir || winOut || r.output_video)});flash(this,'Copied ✓')">Copy ${r.output_folder ? "folder" : "output"} path</button></div>`;
-  const cont = byId("btn-continue");
-  if (cont) cont.onclick = async () => {
-    clips = []; currentPlan = null;
-    await addClip(r.output_video, true); renderClips(); if (cwd) browse(cwd.path);
-    setMode("ai"); byId("director.instructions").value = ""; updateTags();
-    byId("result").innerHTML = `<div class="banner info">Now editing <b>${esc(r.output_video.split("/").pop())}</b>. Its transcript is already known, so <b>Ask AI for a plan</b> takes seconds. Describe what to cut in the instructions box.</div>`;
-    byId("director.instructions").focus();
-  };
-}
-
-function renderPlan(j) {
-  const r = j.result, box = byId("result"), plan = r.plan;
-  currentPlan = { input: r.input, plan, key: clips.map(c => c.path).join("|"), cost: j.cost };
-  const tr = (r.transcript || []).map(t => `<div><span class="t">${fmtSec(t.start)}</span>${esc(t.text)}</div>`).join("") || `<div class="hint">No speech found.</div>`;
-  let html = `<details ${plan ? "" : "open"} style="margin-top:10px"><summary>Transcript <span class="tag">${(r.transcript || []).length} segments</span></summary><div class="body transcript">${tr}</div></details>`;
-  if (!plan) {
-    html += `<div class="banner info">Transcribed in ${fmtSec(r.processing_time_sec)}. Read it, add instructions if you like, then press <b>Ask AI for a plan</b> — the transcript is cached, so that step takes seconds.</div>`;
-    box.innerHTML = html; return;
-  }
-  const cats = {};
-  for (const p of plan.removed) { const c = (p.reason || "other").split(/[:\s—-]/)[0].toLowerCase(); cats[c] = (cats[c] || 0) + 1; }
-  const piece = (p, kind, i) => `<label class="plan-piece ${kind}"><input type="checkbox" data-kind="${kind}" data-i="${i}" ${kind === "kept" ? "checked" : ""}>
-      <div><span class="t">${fmtSec(p.start)} → ${fmtSec(p.end)} (${(p.end - p.start).toFixed(1)}s)</span>
-      ${p.note ? `<div class="why ok">${esc(p.note)}</div>` : ""}${p.reason ? `<div class="why">${esc(p.reason)}</div>` : ""}
-      <div class="txt">${esc(p.text || "")}</div></div></label>`;
-  html += `<div class="plan-summary"><b>${esc(plan.model || plan.provider)}${plan.skill_name ? ` · ${esc(plan.skill_name)}` : ""} says:</b> ${esc(plan.summary || "")}
-      <div class="cats">${Object.entries(cats).map(([c, n]) => `<span>${n} × ${esc(c)}</span>`).join("")}</div></div>
-    <div class="stats"><div class="stat"><b>${fmtSec(plan.duration_before_sec)} → ${fmtSec(plan.duration_after_sec)}</b><span>speech → after AI edit</span></div>
-      <div class="stat"><b>${plan.keep.length}</b><span>pieces kept${plan.reordered ? " (reordered)" : ""}</span></div>
-      <div class="stat"><b>${plan.removed.length}</b><span>cuts</span></div></div>
-    ${costLine(j.cost)}
-    <div class="actions"><button class="primary" id="btn-render">🎬 Render this plan</button></div>
-    <h3 class="sub">Cuts — tick any to put back</h3>${plan.removed.length ? plan.removed.map((p, i) => piece(p, "removed", i)).join("") : `<div class="hint">The AI didn't cut anything.</div>`}
-    <h3 class="sub">Keeping — untick to drop</h3>${plan.keep.map((p, i) => piece(p, "kept", i)).join("")}
-    <h3 class="sub">Not happy? Tell the AI</h3>
-    <textarea id="revise" placeholder="e.g. Too aggressive — keep the part about the button. Don't reorder."></textarea>
-    <div class="actions"><button id="btn-revise" class="small">Ask again with these changes</button></div>`;
-  box.innerHTML = html;
-  byId("btn-render").onclick = () => {
-    const sel = $$("#result input[type=checkbox]");
-    const kept = sel.filter(c => c.dataset.kind === "kept" && c.checked).map(c => plan.keep[+c.dataset.i]);
-    const restored = sel.filter(c => c.dataset.kind === "removed" && c.checked).map(c => plan.removed[+c.dataset.i]);
-    let ranges;
-    if (!plan.reordered) ranges = [...kept, ...restored].sort((a, b) => a.start - b.start);
-    else { ranges = [...kept]; for (const rp of restored.sort((a, b) => a.start - b.start)) { let idx = -1; ranges.forEach((k, i) => { if (k.start < rp.start) idx = i; }); ranges.splice(idx + 1, 0, rp); } }
-    const reviewed = { ...plan, keep: kept, removed: plan.removed.filter(p => !restored.includes(p)), restored, final_keep_segments: undefined };
-    submit("render", { selected_ranges: ranges.map(p => ({ start: p.start, end: p.end })), carry_cost: currentPlan && currentPlan.cost, carry_plan: reviewed });
-  };
-  byId("btn-revise").onclick = () => {
-    const extra = byId("revise").value.trim(); if (!extra) return;
-    const ta = byId("director.instructions");
-    ta.value = (ta.value.trim() + "\n\nRevision: " + extra).trim(); updateTags();
-    submit("plan");
-  };
-}
-
-async function refreshJobs() {
-  const { jobs, totals } = await api("/api/jobs"), box = byId("jobs");
-  const t = byId("totals");
-  t.hidden = !totals.calls;
-  t.innerHTML = `This session: <b>${totals.calls}</b> AI call${totals.calls === 1 ? "" : "s"} · <b>${totals.input_tokens.toLocaleString()}</b> in / <b>${totals.output_tokens.toLocaleString()}</b> out · <b>${usd(totals.cost_total)}</b>`;
-  if (!jobs.length) { box.innerHTML = `<div class="hint">No jobs yet.</div>`; return; }
-  box.innerHTML = "";
-  for (const j of jobs) {
-    const el = document.createElement("div"); el.className = "item";
-    const name = (j.inputs && j.inputs.length > 1) ? `${j.inputs.length} clips · ${j.inputs[0].split("/").pop()} …` : j.input.split("/").pop();
-    const kind = { analyze: "transcript", plan: "AI plan", render: "render", process: "edit" }[j.mode] || j.mode;
-    const extra = j.status === "done" && j.result ? (j.result.status === "plan" ? kind : `${kind} · ${fmtSec(j.result.duration_original_sec)} → ${fmtSec(j.result.duration_edited_sec)}`) : `${kind} · ${j.status}`;
-    const c = j.cost && !j.cost.carried && j.cost.cost_total != null ? ` · ${usd(j.cost.cost_total)}` : "";
-    el.innerHTML = `<span class="dot ${j.status}"></span><span class="name" title="${esc((j.inputs || [j.input]).join("\n"))}">${esc(name)}</span><span class="meta">${esc(extra)}${c}</span>`;
-    el.onclick = () => watchJob(j.id);
-    box.appendChild(el);
-  }
-}
-
-// ─────────────── API keys ───────────────
-byId("btn-key").onclick = () => { byId("key-input").value = ""; byId("key-provider").value = byId("director.provider").value; byId("key-dialog").showModal(); };
-byId("key-cancel").onclick = () => byId("key-dialog").close();
-byId("key-save").onclick = async () => {
-  const r = await api("/api/key", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: byId("key-provider").value, api_key: byId("key-input").value }) });
-  BOOT.keys = r.keys; BOOT.api_key_present = r.api_key_present; setKeyPill(); updateTags(); byId("key-dialog").close(); loadModels(true);
-};
-function setKeyPill() {
-  byId("key-pills").innerHTML = Object.entries({ anthropic: "Claude", openai: "ChatGPT", openrouter: "OpenRouter", nvidia: "NVIDIA" })
-    .map(([k, n]) => `<span class="pill ${BOOT.keys[k] ? "ok" : ""}" title="${BOOT.keys[k] ? "key set" : "no key"}">${n} ${BOOT.keys[k] ? "✓" : "–"}</span>`).join("");
-}
-
-// ─────────────── boot ───────────────
-(async () => {
-  BOOT = await api("/api/bootstrap"); DEFAULTS = BOOT.defaults;
-  byId("repo-pill").textContent = BOOT.repo;
-  byId("ffmpeg-pill").textContent = BOOT.ffmpeg ? "ffmpeg ✓" : "ffmpeg missing!";
-  byId("ffmpeg-pill").className = "pill " + (BOOT.ffmpeg ? "ok" : "warn");
-  setKeyPill();
-  byId("whisper_model").innerHTML = BOOT.models.map(m => `<option value="${m}">${m}</option>`).join("");
-  byId("lut-select").innerHTML = `<option value="">None</option>` + BOOT.luts.map(l => `<option value="${esc(l)}">${esc(l.split("/").pop())}</option>`).join("");
-  const preset = localStorage.getItem("ave.preset");
-  if (preset) { try { applyPreset(JSON.parse(preset)); } catch { applyDefaults(DEFAULTS); } } else applyDefaults(DEFAULTS);
-  const roots = byId("roots");
-  for (const r of BOOT.roots) { const b = document.createElement("button"); b.textContent = r.label; b.onclick = () => browse(r.path); roots.appendChild(b); }
-  await loadSkills();
-  const preset2 = localStorage.getItem("ave.preset"); if (preset2) { try { const o = JSON.parse(preset2); if (o.director && o.director.skill) byId("director.skill").value = o.director.skill; updateSkillDesc(); } catch {} }
-  setMode(editMode); presetHint();
-  browse(localStorage.getItem("ave.cwd") || (BOOT.roots[0] && BOOT.roots[0].path));
-  refreshJobs();
-  loadModels();
-  refreshWhisper();
-})();
-</script>
+<script type="module" src="/static/js/main.js?v=__V__"></script>
 </body>
 </html>

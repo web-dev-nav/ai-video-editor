@@ -34,6 +34,7 @@ def run_pipeline(
     plan_only: bool = False,
     analysis_cache: str | Path | None = None,
     keep_override: list[dict] | None = None,
+    vo_cues: str | Path | None = None,
 ) -> dict[str, Any]:
     """Execute the full video editing pipeline.
 
@@ -54,6 +55,7 @@ def run_pipeline(
         keep_override: Explicit keep segments [{start, end}] in playback order;
             skips edit_decisions and the director entirely (used to render a
             reviewed plan).
+        vo_cues: JSON file with voiceover cues; enables the voiceover step.
 
     Returns:
         A result dict suitable for JSON serialization:
@@ -82,6 +84,10 @@ def run_pipeline(
     if skill:
         config["director"]["skill"] = skill
         config["director"]["enabled"] = True
+    if vo_cues:
+        config.setdefault("voiceover", {})
+        config["voiceover"]["cues_file"] = str(vo_cues)
+        config["voiceover"]["enabled"] = True
 
     # Probe original video duration
     emit_progress("setup", "probe", 0.0, "Probing input video...")
@@ -187,6 +193,12 @@ def run_pipeline(
         if context.get("hook_segment"):
             _prepend_hook(context, config)
 
+        from .steps.voiceover import run as voiceover
+        context.update(voiceover(context, config))
+
+        from .steps.mix_audio import run as mix_audio
+        context.update(mix_audio(context, config))
+
         from .steps.chapters import run as chapters
         context.update(chapters(context, config))
 
@@ -224,6 +236,9 @@ def run_pipeline(
         "chapters": context.get("chapters"),
         "director_plan": context.get("director_plan"),
         "director_removed_sec": edit_stats.get("director_removed_sec", 0.0),
+        "voiceover": context.get("voiceover_cost"),
+        # Token usage of the secondary LLM calls (hook, chapters) for cost tracking.
+        "extra_usage": [u for u in (context.get("hook_usage"), context.get("chapters_usage")) if u],
         # Kept ranges of the *input* in playback order — lets a GUI map the transcript
         # onto the output so the result can be edited again without re-transcribing.
         "keep_segments": [
@@ -348,6 +363,8 @@ def _prepend_hook(context: dict[str, Any], config: dict[str, Any]) -> None:
     try:
         run_ffmpeg(cmd_join)
         context["assembled_video"] = output_with_hook
+        # Everything authored on the edited timeline (voiceover cues) now starts this much later.
+        context["timeline_offset_sec"] = xfade_offset
         emit_progress("ai_enhancement", "hook_prepend", 1.0, "Hook prepended to video.")
     except Exception as e:
         logger.warning("Failed to prepend hook: %s — proceeding without hook.", e)

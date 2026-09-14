@@ -55,6 +55,23 @@ def classify_http(status: int | None, text: str) -> str:
     return "other"
 
 
+def resolve_llm(section: dict | None, director: dict | None) -> tuple[str, str]:
+    """Provider/model for a secondary LLM step (hook, chapters, script rewrite).
+
+    The section's own provider/model win; otherwise fall back to the AI Director's
+    choice, and finally to the provider's default model."""
+    section = section or {}
+    director = director or {}
+    provider = (section.get("provider") or director.get("provider") or "anthropic").lower()
+    model = section.get("model")
+    if not model:
+        if provider == (director.get("provider") or "anthropic").lower() and director.get("model"):
+            model = director["model"]
+        else:
+            model = DEFAULT_MODELS.get(provider, "")
+    return provider, model
+
+
 def available_providers() -> dict[str, bool]:
     """Which providers have a key configured in the environment."""
     return {p: bool(os.environ.get(env)) for p, env in KEY_ENV.items()}

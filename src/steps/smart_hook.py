@@ -1,4 +1,4 @@
-"""Smart hook step — uses OpenRouter LLM to identify the most engaging 5-10s intro hook."""
+"""Smart hook step — asks an LLM (any configured provider) for the most engaging 5-10s intro hook."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..utils.json_output import emit_progress
-from ..utils.openrouter import chat_completion, OpenRouterError
+from ..utils.llm import LLMError, complete, resolve_llm
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,9 @@ Rules:
 def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     """Find the most engaging hook segment using an LLM analysis of the transcript.
 
-    If OPENROUTER_API_KEY is not set or the call fails, logs a warning and
-    returns empty dict so the pipeline continues without a hook.
+    Provider/model come from config["hook"] (falling back to the AI Director's).
+    If no key is set or the call fails, logs a warning and returns an empty dict
+    so the pipeline continues without a hook.
 
     Args:
         context: Pipeline state. Reads:
@@ -54,15 +55,6 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         emit_progress("ai", "smart_hook", 1.0, "Smart hook disabled — skipping.")
         return {}
 
-    import os
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        logger.warning(
-            "OPENROUTER_API_KEY not set — skipping smart hook generation. "
-            "Set this env var to enable hook detection."
-        )
-        emit_progress("ai", "smart_hook", 1.0, "Smart hook skipped (no API key).")
-        return {}
-
     transcript = context.get("transcript")
     if not transcript:
         logger.warning("No transcript in context — skipping smart hook.")
@@ -71,7 +63,7 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
 
     emit_progress("ai", "smart_hook", 0.0, "Analyzing transcript for best hook segment...")
 
-    model = hook_cfg.get("model", "anthropic/claude-sonnet-4")
+    provider, model = resolve_llm(hook_cfg, config.get("director"))
     transcript_text = _format_transcript_for_llm(transcript)
 
     prompt = (
@@ -80,17 +72,11 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     )
 
     try:
-        emit_progress("ai", "smart_hook", 0.3, f"Sending transcript to {model}...")
-        response_text = chat_completion(
-            prompt=prompt,
-            model=model,
-            system=_SYSTEM_PROMPT,
-            temperature=0.3,
-            max_tokens=256,
-        )
-    except OpenRouterError as exc:
-        logger.warning("OpenRouter API error during hook detection: %s — skipping.", exc)
-        emit_progress("ai", "smart_hook", 1.0, "Smart hook skipped (API error).")
+        emit_progress("ai", "smart_hook", 0.3, f"Sending transcript to {provider}/{model}...")
+        response_text, usage = complete(prompt, _SYSTEM_PROMPT, provider, model, max_tokens=512)
+    except LLMError as exc:
+        logger.warning("LLM error during hook detection: %s — skipping.", exc)
+        emit_progress("ai", "smart_hook", 1.0, f"Smart hook skipped ({exc.kind}: {exc})")
         return {}
     except Exception as exc:
         logger.warning("Unexpected error during hook detection: %s — skipping.", exc)
@@ -107,7 +93,7 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         "ai", "smart_hook", 1.0,
         f"Hook identified: {hook['start']:.1f}s–{hook['end']:.1f}s"
     )
-    return {"hook_segment": hook}
+    return {"hook_segment": hook, "hook_usage": {**usage, "provider": provider, "step": "hook"}}
 
 
 def _format_transcript_for_llm(transcript: Any) -> str:

@@ -46,11 +46,13 @@ hook:
   enabled: true
   duration_sec: 8         # target hook duration
   crossfade_sec: 0.5      # transition between hook and main content
-  model: "anthropic/claude-sonnet-4"   # OpenRouter model
+  provider: null          # anthropic | openai | openrouter | nvidia — null = same as director
+  model: null             # null = the director's model (same provider) or the provider default
 
 chapters:
   enabled: true
-  model: "anthropic/claude-sonnet-4"   # OpenRouter model
+  provider: null          # null = same as director
+  model: null
 
 director:
   enabled: false          # AI Director: an LLM decides what content to keep from your instructions
@@ -60,6 +62,38 @@ director:
   skill: clean            # editing skill from skills/*.md: clean | film-director | youtube-retention | shorts | tutorial | interview
   instructions: ""        # e.g. "cut to under 60s, drop the tangent about the weather"
   boundary_padding_sec: 0.15
+
+voiceover:
+  enabled: false          # text-to-speech narration mixed into the edited video
+  engine: edge            # openai (needs OPENAI_API_KEY) | edge (free, online) | kokoro (free, offline; pip install -e ".[tts-local]")
+  model: gpt-4o-mini-tts  # openai only: gpt-4o-mini-tts | tts-1-hd | tts-1
+  voice: en-US-AriaNeural # engine-specific voice id (openai: nova, alloy…; edge: en-US-AriaNeural…; kokoro: af_heart…)
+  speed: 1.0
+  instructions: "Warm, natural, conversational delivery like a friendly YouTuber. Natural pacing with short pauses at commas and sentence ends. Not a newsreader."
+  mix_mode: narrate       # narrate = original voice ducked under each cue | replace = original muted while a cue plays
+  fit: tempo              # when a clip is longer than its slot: tempo (speed up ≤ max_tempo) | overrun | none
+  max_tempo: 1.3
+  gain_db: 0
+  duck_original_db: -12   # narrate mode: how far the original drops under the voiceover
+  cues: []                # [{start, end?, text, voice?, speed?, instructions?, audio?}] — start is on the EDITED timeline
+  cues_file: null         # alternative: JSON file with the cue list (CLI --vo-cues)
+  cache_dir: null         # synthesized clips are cached here (defaults to the work dir)
+
+music:
+  enabled: false
+  path: null              # audio file (mp3/wav/m4a/ogg/flac)
+  gain_db: -18
+  fade_in_sec: 2
+  fade_out_sec: 3
+  start_offset_sec: 0     # skip this much of the music file
+  loop: true              # repeat to fill the video
+  duck: true              # lower the music under speech / voiceover
+  duck_db: -12
+
+mix:
+  original_gain_db: 0     # gain on the original voice track
+  loudnorm: false         # normalise the final mix to loudness_target LUFS
+  loudness_target: -14
 
 encoding:
   codec: h264_videotoolbox    # macOS hardware encoder

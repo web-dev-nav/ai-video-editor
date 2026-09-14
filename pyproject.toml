@@ -23,12 +23,19 @@ dependencies = [
     # AI Director providers
     "anthropic>=1.0.0",
     "openai>=1.0.0",
+    # Free online text-to-speech for the voiceover step (Microsoft Edge voices)
+    "edge-tts>=7.0",
 ]
 
 [project.optional-dependencies]
 gui = [
     "starlette>=0.40",
     "uvicorn>=0.30",
+]
+# Offline text-to-speech (Kokoro-82M, CPU). Also needs `apt install espeak-ng`.
+tts-local = [
+    "kokoro>=0.9",
+    "soundfile>=0.12",
 ]
 dev = [
     "pytest>=8.0",

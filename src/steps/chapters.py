@@ -1,16 +1,15 @@
-"""Chapters step — uses OpenRouter LLM to generate YouTube chapter markers."""
+"""Chapters step — asks an LLM (any configured provider) to generate YouTube chapter markers."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
 
 from ..utils.json_output import emit_progress
-from ..utils.openrouter import chat_completion, OpenRouterError
+from ..utils.llm import LLMError, complete, resolve_llm
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,8 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     """Generate YouTube chapter markers from the video transcript using an LLM.
 
     Saves chapters to a .chapters.txt file alongside the output video.
-    If OPENROUTER_API_KEY is not set or the call fails, skips gracefully.
+    Provider/model come from config["chapters"] (falling back to the AI Director's).
+    If no key is set or the call fails, skips gracefully.
 
     Args:
         context: Pipeline state. Reads:
@@ -59,14 +59,6 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         emit_progress("ai", "chapters", 1.0, "Chapter generation disabled — skipping.")
         return {}
 
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        logger.warning(
-            "OPENROUTER_API_KEY not set — skipping chapter generation. "
-            "Set this env var to enable chapter markers."
-        )
-        emit_progress("ai", "chapters", 1.0, "Chapter generation skipped (no API key).")
-        return {}
-
     transcript = context.get("transcript")
     if not transcript:
         logger.warning("No transcript in context — skipping chapter generation.")
@@ -75,7 +67,7 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
 
     emit_progress("ai", "chapters", 0.0, "Generating YouTube chapter markers...")
 
-    model = chapters_cfg.get("model", "anthropic/claude-sonnet-4")
+    provider, model = resolve_llm(chapters_cfg, config.get("director"))
     transcript_text = _format_transcript_for_llm(transcript)
 
     prompt = (
@@ -84,17 +76,11 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     )
 
     try:
-        emit_progress("ai", "chapters", 0.3, f"Sending transcript to {model}...")
-        response_text = chat_completion(
-            prompt=prompt,
-            model=model,
-            system=_SYSTEM_PROMPT,
-            temperature=0.3,
-            max_tokens=512,
-        )
-    except OpenRouterError as exc:
-        logger.warning("OpenRouter API error during chapter generation: %s — skipping.", exc)
-        emit_progress("ai", "chapters", 1.0, "Chapter generation skipped (API error).")
+        emit_progress("ai", "chapters", 0.3, f"Sending transcript to {provider}/{model}...")
+        response_text, usage = complete(prompt, _SYSTEM_PROMPT, provider, model, max_tokens=1024)
+    except LLMError as exc:
+        logger.warning("LLM error during chapter generation: %s — skipping.", exc)
+        emit_progress("ai", "chapters", 1.0, f"Chapter generation skipped ({exc.kind}: {exc})")
         return {}
     except Exception as exc:
         logger.warning("Unexpected error during chapter generation: %s — skipping.", exc)
@@ -115,7 +101,8 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         "ai", "chapters", 1.0,
         f"Generated {len(chapters)} chapters → {Path(chapters_file).name}"
     )
-    return {"chapters": chapters, "chapters_file": str(chapters_file)}
+    return {"chapters": chapters, "chapters_file": str(chapters_file),
+            "chapters_usage": {**usage, "provider": provider, "step": "chapters"}}
 
 
 def _format_transcript_for_llm(transcript: Any) -> str:

@@ -64,6 +64,25 @@ def _validate(config: dict[str, Any]) -> None:
     if not (0 <= quality <= 100):
         raise ValueError(f"encoding.quality must be between 0 and 100, got {quality}")
 
+    vo = config.get("voiceover") or {}
+    if vo.get("enabled"):
+        engine = vo.get("engine", "edge")
+        if engine not in ("openai", "edge", "kokoro"):
+            raise ValueError(f"voiceover.engine must be openai, edge or kokoro, got '{engine}'")
+        if vo.get("mix_mode", "narrate") not in ("narrate", "replace"):
+            raise ValueError(f"voiceover.mix_mode must be narrate or replace, got '{vo.get('mix_mode')}'")
+        if vo.get("fit", "tempo") not in ("tempo", "overrun", "none"):
+            raise ValueError(f"voiceover.fit must be tempo, overrun or none, got '{vo.get('fit')}'")
+        max_tempo = float(vo.get("max_tempo", 1.3))
+        if not (1.0 <= max_tempo <= 2.0):
+            raise ValueError(f"voiceover.max_tempo must be between 1.0 and 2.0, got {max_tempo}")
+
+    music = config.get("music") or {}
+    if music.get("enabled"):
+        path = music.get("path")
+        if not path or not Path(path).is_file():
+            raise ValueError(f"music.path must point to an existing audio file, got {path!r}")
+
 
 def get_openrouter_api_key() -> str | None:
     """Return the OpenRouter API key from the environment, or None if not set."""

@@ -88,6 +88,11 @@ def process(
         "--keep-json",
         help="Render exactly these segments: a JSON list of {start, end} in playback order.",
     ),
+    vo_cues: Path | None = typer.Option(
+        None,
+        "--vo-cues",
+        help="Voiceover: JSON list of {start, text, ...} cues on the edited timeline (enables the voiceover step).",
+    ),
 ) -> None:
     """Process a video: remove silences, enhance audio, apply color grade, generate hook + chapters."""
     # Load .env file if present alongside the video or in the tool directory
@@ -120,6 +125,7 @@ def process(
             plan_only=plan_only,
             analysis_cache=analysis_cache,
             keep_override=keep_override,
+            vo_cues=vo_cues,
         )
         emit_result(result)
     except PipelineError as e:

@@ -22,20 +22,29 @@ from pathlib import Path
 import yaml
 from starlette.applications import Starlette
 from starlette.requests import Request
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 
 REPO = Path(__file__).resolve().parent.parent
 GUI_DIR = Path(__file__).resolve().parent
+if str(REPO) not in sys.path:   # the pipeline package (src/) is imported directly in a few helpers
+    sys.path.insert(0, str(REPO))
 VENV_BIN = REPO / ".venv" / ("Scripts" if os.name == "nt" else "bin")
 CLI = VENV_BIN / ("ai-video-editor.exe" if os.name == "nt" else "ai-video-editor")
 UPLOADS = REPO / "uploads"
 JOBS_DIR = REPO / "uploads" / ".jobs"
 CACHE_DIR = REPO / "uploads" / ".cache"
+TTS_CACHE = CACHE_DIR / "tts"
+PROJECTS_DIR = REPO / "uploads" / ".projects"
+MUSIC_UPLOADS = REPO / "uploads" / "music"
 LUTS_DIR = REPO / "luts"
 ENV_FILE = REPO / ".env"
+STATIC_DIR = GUI_DIR / "static"
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".wmv"}
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma"}
 WHISPER_MODELS = ["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"]
 
 # Overall-progress slice per pipeline step (start%, end%), in pipeline order.
@@ -52,9 +61,11 @@ STEP_RANGES = {
     ("assembly", "assemble"): (56, 62),
     ("assembly", "enhance_audio"): (62, 66),
     ("assembly", "color_grade"): (66, 68),
-    ("ai", "smart_hook"): (68, 74),
-    ("ai", "chapters"): (74, 78),
-    ("encode", "encode"): (78, 96),
+    ("ai", "smart_hook"): (68, 72),
+    ("ai", "voiceover"): (72, 75),
+    ("ai", "mix_audio"): (75, 78),
+    ("ai", "chapters"): (78, 80),
+    ("encode", "encode"): (80, 96),
     ("finish", "format"): (96, 99),
 }
 
@@ -431,6 +442,10 @@ def _bundle_output(job: "Job", p: dict, result: dict) -> None:
         if txt:
             (folder / "transcript_original.txt").write_text(txt, encoding="utf-8")
             files.append("transcript_original.txt")
+            from src.utils.translit import has_devanagari, to_roman
+            if has_devanagari(txt):   # Hindi: also a Roman-letter (Hinglish) copy
+                (folder / "transcript_original_roman.txt").write_text(to_roman(txt), encoding="utf-8")
+                files.append("transcript_original_roman.txt")
     ch = result.get("chapters_file")
     if ch and Path(ch).exists():
         shutil.move(ch, str(folder / Path(ch).name))
@@ -439,28 +454,21 @@ def _bundle_output(job: "Job", p: dict, result: dict) -> None:
     result["bundle_files"] = files
 
 
-def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cfg: dict) -> bool:
-    """Write an analysis cache for the rendered output by remapping the input's cached
-    transcript/VAD onto the output timeline (kept ranges concatenated in order).
-    Lets the result be re-edited by the AI without running Whisper again."""
-    src = _cache_path_for(input_path)
-    if not src.exists() or not keep or not Path(output_path).exists():
-        return False
-    try:
-        cache = json.loads(src.read_text())
-    except (OSError, ValueError):
-        return False
+def _remap_transcript(cache: dict, keep: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Map a cached transcript/VAD onto the edited timeline: kept ranges concatenated in order.
+    Returns (transcript_segments, speech_segments) in output time; every word keeps a `src`
+    field (its original start) so the GUI can anchor things to source time."""
     words_all = [w for seg in cache["transcript"] for w in (seg.get("words") or [])]
     new_words: list[dict] = []
     new_speech: list[dict] = []
     offset = 0.0
-    for k in keep:
+    for piece, k in enumerate(keep):
         ks, ke = float(k["start"]), float(k["end"])
         for w in words_all:
             mid = (w["start"] + w["end"]) / 2
             if ks <= mid <= ke:
-                new_words.append({**w, "start": round(offset + max(0.0, w["start"] - ks), 3),
-                                  "end": round(offset + min(ke - ks, w["end"] - ks), 3), "_piece": len(new_speech)})
+                new_words.append({**w, "src": w["start"], "start": round(offset + max(0.0, w["start"] - ks), 3),
+                                  "end": round(offset + min(ke - ks, w["end"] - ks), 3), "_piece": piece})
         for sp in cache["speech_segments"]:
             a, b = max(ks, sp["start"]), min(ke, sp["end"])
             if b - a > 0.05:
@@ -475,9 +483,24 @@ def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cf
         cur.append(w)
     if cur:
         segs.append(cur)
-    transcript = [{"start": ws[0]["start"], "end": ws[-1]["end"],
+    transcript = [{"start": ws[0]["start"], "end": ws[-1]["end"], "src": ws[0]["src"],
                    "text": " ".join(w["word"].strip() for w in ws),
                    "words": [{k: v for k, v in w.items() if k != "_piece"} for w in ws]} for ws in segs]
+    return transcript, new_speech
+
+
+def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cfg: dict) -> bool:
+    """Write an analysis cache for the rendered output by remapping the input's cached
+    transcript/VAD onto the output timeline (kept ranges concatenated in order).
+    Lets the result be re-edited by the AI without running Whisper again."""
+    src = _cache_path_for(input_path)
+    if not src.exists() or not keep or not Path(output_path).exists():
+        return False
+    try:
+        cache = json.loads(src.read_text())
+    except (OSError, ValueError):
+        return False
+    transcript, new_speech = _remap_transcript(cache, keep)
     out = Path(output_path)
     st = out.stat()
     data = {"key": {"input": str(out.resolve()), "size": st.st_size, "mtime": int(st.st_mtime),
@@ -488,6 +511,97 @@ def _derive_output_cache(input_path: str, output_path: str, keep: list[dict], cf
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(data))
     return True
+
+
+def _fold_extra_costs(cost: dict | None, result: dict) -> dict | None:
+    """Add hook/chapters token usage and TTS spend to a job's cost record."""
+    items = []
+    for u in result.get("extra_usage") or []:
+        rec = cost_for(u.get("provider", ""), u)
+        if rec:
+            items.append({**rec, "step": u.get("step")})
+    vo = result.get("voiceover") or {}
+    if vo.get("chars"):
+        items.append({"step": "voiceover", "model": "tts", "chars": vo["chars"], "cost_total": vo.get("cost_usd", 0.0)})
+    if not items:
+        return cost
+    if cost and cost.get("carried"):
+        # The plan was paid for by an earlier job; only the new calls count towards this job.
+        base = {"provider": items[0].get("provider", ""), "model": ", ".join(str(i.get("model")) for i in items),
+                "input_tokens": 0, "output_tokens": 0, "cost_total": 0.0, "plan_cost": cost}
+    else:
+        base = dict(cost) if cost else {"provider": "", "model": "", "input_tokens": 0, "output_tokens": 0, "cost_total": 0.0}
+    base["items"] = items
+    for it in items:
+        base["input_tokens"] = base.get("input_tokens", 0) + it.get("input_tokens", 0)
+        base["output_tokens"] = base.get("output_tokens", 0) + it.get("output_tokens", 0)
+        if it.get("cost_total") is not None:
+            base["cost_total"] = round((base.get("cost_total") or 0.0) + it["cost_total"], 5)
+    base.pop("carried", None)
+    return base
+
+
+# ---------------------------------------------------------------------------
+# Projects (re-editable edits): one JSON per project in uploads/.projects
+# ---------------------------------------------------------------------------
+
+def _project_path(pid: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", pid or ""):
+        raise ValueError("bad project id")
+    return PROJECTS_DIR / f"{pid}.json"
+
+
+def _load_project(pid: str) -> dict | None:
+    f = _project_path(pid)
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _save_project(proj: dict, touch: bool = True) -> dict:
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    if touch or not proj.get("updated"):
+        proj["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    proj.setdefault("created", proj["updated"])
+    proj.setdefault("version", 1)
+    tmp = _project_path(proj["id"]).with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(proj, indent=1, ensure_ascii=False))
+    os.replace(tmp, _project_path(proj["id"]))
+    return proj
+
+
+def _project_summary(proj: dict) -> dict:
+    src = proj.get("source") or {}
+    inputs = src.get("inputs") or []
+    return {"id": proj["id"], "name": proj.get("name") or "Untitled", "created": proj.get("created"), "updated": proj.get("updated"),
+            "inputs": inputs, "input_name": Path(inputs[0]).name if inputs else "", "clips": len(inputs),
+            "mode": proj.get("mode"), "duration_sec": src.get("duration_sec"),
+            "cues": len(((proj.get("voiceover") or {}).get("cues") or [])), "music": bool((proj.get("music") or {}).get("enabled")),
+            "renders": len(proj.get("renders") or []), "last_output": (proj.get("renders") or [{}])[-1].get("output_video"),
+            "missing_inputs": [x for x in inputs if not Path(x).is_file()]}
+
+
+def _record_render(job: "Job", p: dict, result: dict) -> None:
+    """Append this render to the project and drop a self-contained project.json into the bundle."""
+    proj = _load_project(p["project_id"])
+    if not proj:
+        return
+    entry = {"job_id": job.id, "output_video": result.get("output_video"), "output_folder": result.get("output_folder"),
+             "created": time.strftime("%Y-%m-%d %H:%M:%S"), "duration_edited_sec": result.get("duration_edited_sec"),
+             "cost": job.cost, "output_format": (p.get("options", {}).get("output_format") or {}).get("kind", "source")}
+    proj.setdefault("renders", []).append(entry)
+    _save_project(proj, touch=False)  # don't bump `updated`: the GUI's next autosave would conflict
+    folder = result.get("output_folder")
+    if folder and Path(folder).is_dir():
+        (Path(folder) / "project.json").write_text(json.dumps(proj, indent=1, ensure_ascii=False))
+        cache = _cache_path_for(p["input"])
+        if cache.exists():
+            shutil.copy(cache, Path(folder) / "analysis_cache.json")
+        result.setdefault("bundle_files", []).extend(["project.json", "analysis_cache.json"] if cache.exists() else ["project.json"])
+    result["project_id"] = proj["id"]
 
 
 def _cache_path_for(input_path: str) -> Path:
@@ -644,17 +758,60 @@ def _build_config(p: dict) -> dict:
     cfg["hook"]["enabled"] = bool(h.get("enabled", False))
     if "duration_sec" in h:
         cfg["hook"]["duration_sec"] = h["duration_sec"]
-    if h.get("model"):
-        cfg["hook"]["model"] = h["model"]
+    cfg["hook"]["provider"] = h.get("provider") or None
+    cfg["hook"]["model"] = h.get("model") or None
 
     c = o.get("chapters", {})
     cfg["chapters"]["enabled"] = bool(c.get("enabled", False))
-    if c.get("model"):
-        cfg["chapters"]["model"] = c["model"]
+    cfg["chapters"]["provider"] = c.get("provider") or None
+    cfg["chapters"]["model"] = c.get("model") or None
+
+    v = o.get("voiceover") or {}
+    cfg.setdefault("voiceover", {})
+    cues = [{k: c.get(k) for k in ("start", "end", "text", "voice", "speed", "instructions", "audio", "engine", "model") if c.get(k) is not None}
+            for c in (v.get("cues") or []) if (c.get("text") or "").strip()]
+    cfg["voiceover"].update({
+        "enabled": bool(v.get("enabled", bool(cues))) and bool(cues) and p.get("mode", "process") in ("process", "render"),
+        "engine": v.get("engine") or cfg["voiceover"].get("engine", "edge"),
+        "model": v.get("model") or cfg["voiceover"].get("model"),
+        "voice": v.get("voice") or cfg["voiceover"].get("voice"),
+        "speed": float(v.get("speed") or 1.0),
+        "instructions": v.get("instructions") if v.get("instructions") is not None else cfg["voiceover"].get("instructions", ""),
+        "mix_mode": v.get("mix_mode") or "narrate",
+        "fit": v.get("fit") or "tempo",
+        "max_tempo": float(v.get("max_tempo") or 1.3),
+        "gain_db": float(v.get("gain_db") or 0),
+        "duck_original_db": float(v.get("duck_original_db") if v.get("duck_original_db") is not None else -12),
+        "cues": cues,
+        "cache_dir": str(TTS_CACHE),
+    })
+
+    m = o.get("music") or {}
+    cfg.setdefault("music", {})
+    cfg["music"].update({
+        "enabled": bool(m.get("enabled")) and bool(m.get("path")),
+        "path": win_to_wsl(m["path"]) if m.get("path") else None,
+        "gain_db": float(m.get("gain_db") if m.get("gain_db") is not None else -18),
+        "fade_in_sec": float(m.get("fade_in_sec") or 0),
+        "fade_out_sec": float(m.get("fade_out_sec") or 0),
+        "start_offset_sec": float(m.get("start_offset_sec") or 0),
+        "loop": bool(m.get("loop", True)),
+        "duck": bool(m.get("duck", True)),
+        "duck_db": float(m.get("duck_db") if m.get("duck_db") is not None else -12),
+    })
+
+    mx = o.get("mix") or {}
+    cfg.setdefault("mix", {})
+    cfg["mix"].update({
+        "original_gain_db": float(mx.get("original_gain_db") or 0),
+        "loudnorm": bool(mx.get("loudnorm")),
+        "loudness_target": float(mx.get("loudness_target") or -14),
+    })
 
     d = o.get("director", {})
     cfg.setdefault("director", {})
-    cfg["director"]["enabled"] = bool(d.get("enabled", False))
+    # analyze = transcribe + rule-based cuts only; render = reviewed segments — neither calls the director.
+    cfg["director"]["enabled"] = bool(d.get("enabled", False)) and p.get("mode", "process") in ("process", "plan")
     cfg["director"]["provider"] = d.get("provider") or "anthropic"
     cfg["director"]["model"] = d.get("model") or DEFAULT_MODELS.get(cfg["director"]["provider"], "")
     cfg["director"]["mode"] = d.get("mode") or "ai"
@@ -892,11 +1049,17 @@ def _run_job(job: Job) -> None:
         plan = result.get("director_plan")
         job.cost = cost_for(plan.get("provider", ""), plan["usage"]) if plan and plan.get("usage") else (
             {**p["carry_cost"], "carried": True} if p.get("carry_cost") else None)
+        job.cost = _fold_extra_costs(job.cost, result)
         if opts.get("bundle", True):
             try:
                 _bundle_output(job, p, result)
             except Exception as exc:  # noqa: BLE001
                 job.log.append(f"[gui] bundle failed: {exc}")
+        if p.get("project_id"):
+            try:
+                _record_render(job, p, result)
+            except Exception as exc:  # noqa: BLE001
+                job.log.append(f"[gui] could not update project: {exc}")
         # Make the output re-editable without re-transcribing (not when a hook was
         # prepended — that shifts the timeline in a way we don't track).
         if not result.get("hook_segment"):
@@ -908,6 +1071,10 @@ def _run_job(job: Job) -> None:
                     if txt:
                         Path(result["output_folder"], "transcript.txt").write_text(txt, encoding="utf-8")
                         result.setdefault("bundle_files", []).insert(1, "transcript.txt")
+                        from src.utils.translit import has_devanagari, to_roman
+                        if has_devanagari(txt):
+                            Path(result["output_folder"], "transcript_roman.txt").write_text(to_roman(txt), encoding="utf-8")
+                            result["bundle_files"].insert(2, "transcript_roman.txt")
             except Exception as exc:  # noqa: BLE001
                 job.log.append(f"[gui] could not derive output cache: {exc}")
                 result["continue_ready"] = False
@@ -920,7 +1087,7 @@ def _run_job(job: Job) -> None:
             job.result = result
             job.overall = 100.0
             plan = result.get("plan") or result.get("director_plan")
-            if plan and plan.get("usage"):
+            if plan and plan.get("usage") and (job.cost is None or job.cost.get("carried")):
                 job.cost = cost_for(plan.get("provider", ""), plan["usage"])
             elif job.cost is None and p.get("carry_cost"):
                 job.cost = {**p["carry_cost"], "carried": True}
@@ -965,11 +1132,21 @@ threading.Thread(target=_worker, daemon=True).start()
 # Routes
 # ---------------------------------------------------------------------------
 
+def _static_version() -> str:
+    try:
+        return str(int(max(f.stat().st_mtime for f in STATIC_DIR.rglob("*") if f.is_file())))
+    except ValueError:
+        return "0"
+
+
 async def index(request: Request):
-    return HTMLResponse((GUI_DIR / "index.html").read_text())
+    html = (GUI_DIR / "index.html").read_text()
+    return HTMLResponse(html.replace("__V__", _static_version()))
 
 
 async def api_bootstrap(request: Request):
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
     with open(REPO / "config.default.yml") as f:
         defaults = yaml.safe_load(f)
     # Defaults tuned for this machine: no Apple hardware encoder, lighter Whisper.
@@ -980,7 +1157,10 @@ async def api_bootstrap(request: Request):
 
     luts = sorted(str(p) for p in LUTS_DIR.glob("*.cube")) if LUTS_DIR.exists() else []
     keys = _keys_present()
+    from src.utils import tts as _tts
     return JSONResponse({
+        "tts": {"engines": _tts.engine_status(), "openai_models": _tts.OPENAI_MODELS, "default_voice": _tts.DEFAULT_VOICE,
+                "default_instructions": _tts.DEFAULT_INSTRUCTIONS, "cache_dir": str(TTS_CACHE)},
         "defaults": defaults,
         "luts": luts,
         "models": WHISPER_MODELS,
@@ -1058,6 +1238,8 @@ async def api_models(request: Request):
 
 async def api_browse(request: Request):
     raw = request.query_params.get("path") or str(UPLOADS)
+    kind = request.query_params.get("kind", "video")
+    exts = VIDEO_EXTS if kind == "video" else AUDIO_EXTS if kind == "audio" else VIDEO_EXTS | AUDIO_EXTS
     path = Path(win_to_wsl(raw))
     if path.is_file():
         path = path.parent
@@ -1072,10 +1254,10 @@ async def api_browse(request: Request):
             try:
                 if entry.is_dir():
                     dirs.append({"name": name, "path": str(entry)})
-                elif entry.suffix.lower() in VIDEO_EXTS:
+                elif entry.suffix.lower() in exts:
                     st = entry.stat()
                     files.append({
-                        "name": name, "path": str(entry),
+                        "name": name, "path": str(entry), "kind": "video" if entry.suffix.lower() in VIDEO_EXTS else "audio",
                         "size_mb": round(st.st_size / 1048576, 1), "mtime": st.st_mtime,
                     })
             except OSError:
@@ -1106,13 +1288,20 @@ async def api_info(request: Request):
 
 async def api_upload(request: Request):
     name = Path(request.query_params.get("name", "upload.mp4")).name
-    if Path(name).suffix.lower() not in VIDEO_EXTS:
-        return JSONResponse({"error": "Not a supported video type"}, status_code=400)
-    UPLOADS.mkdir(parents=True, exist_ok=True)
-    dest = UPLOADS / name
+    kind = request.query_params.get("kind", "video")
+    if kind == "audio":
+        if Path(name).suffix.lower() not in AUDIO_EXTS:
+            return JSONResponse({"error": "Not a supported audio type"}, status_code=400)
+        folder = MUSIC_UPLOADS
+    else:
+        if Path(name).suffix.lower() not in VIDEO_EXTS:
+            return JSONResponse({"error": "Not a supported video type"}, status_code=400)
+        folder = UPLOADS
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / name
     stem, suffix, n = dest.stem, dest.suffix, 1
     while dest.exists():
-        dest = UPLOADS / f"{stem}_{n}{suffix}"
+        dest = folder / f"{stem}_{n}{suffix}"
         n += 1
     with open(dest, "wb") as f:
         async for chunk in request.stream():
@@ -1150,13 +1339,17 @@ async def api_jobs_create(request: Request):
         if not Path(pipeline_input).is_file():
             return JSONResponse({"error": "Combined clip not found — ask for a plan first."}, status_code=400)
         try:
-            keep_segments = _finalize_keep(pipeline_input, options, body.get("selected_ranges") or [])
+            if body.get("keep_segments"):
+                keep_segments = _exact_keep(pipeline_input, body["keep_segments"])
+            else:
+                keep_segments = _finalize_keep(pipeline_input, options, body.get("selected_ranges") or [])
         except Exception as exc:  # noqa: BLE001
             return JSONResponse({"error": f"Could not finalize plan: {exc}"}, status_code=400)
         if not keep_segments:
             return JSONResponse({"error": "Nothing selected to keep."}, status_code=400)
     job = Job({"input": first, "inputs": inputs, "output": out, "options": options, "mode": mode,
-               "keep_segments": keep_segments, "carry_cost": body.get("carry_cost"), "carry_plan": body.get("carry_plan")})
+               "keep_segments": keep_segments, "carry_cost": body.get("carry_cost"), "carry_plan": body.get("carry_plan"),
+               "project_id": body.get("project_id")})
     JOBS[job.id] = job
     with QUEUE_CV:
         QUEUE.append(job)
@@ -1188,6 +1381,274 @@ def _finalize_keep(inp: str, options: dict, selected: list[dict]) -> list[dict]:
     mode = cfg["director"].get("mode", "ai")
     pad = float(cfg["director"].get("boundary_padding_sec", 0.15))
     return finalize(_sanitise(selected, total), base_segments(ctx, cfg, mode), _all_words(ctx["transcript"]), mode, pad, total)
+
+
+def _exact_keep(inp: str, ranges: list[dict]) -> list[dict]:
+    """Keep exactly these ranges (already finalized), just sanitised and merged."""
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.steps.ai_director import _merge_touching, _sanitise
+    from src.utils.ffmpeg import probe_duration
+    total = float(probe_duration(Path(inp)))
+    return _merge_touching(_sanitise(ranges, total))
+
+
+async def api_plan_finalize(request: Request):
+    """Finalized keep segments for a set of reviewed ranges — the exact timeline a render would use."""
+    body = await request.json()
+    inputs = [win_to_wsl(x) for x in (body.get("inputs") or [body.get("input", "")]) if x]
+    if not inputs:
+        return JSONResponse({"error": "No input"}, status_code=400)
+    inp = str(_combined_path(inputs)) if len(inputs) > 1 else inputs[0]
+    if not Path(inp).is_file():
+        return JSONResponse({"error": "Input (or combined clip) not found"}, status_code=400)
+    try:
+        if body.get("exact"):
+            keep = await run_in_threadpool(_exact_keep, inp, body.get("selected_ranges") or [])
+        else:
+            keep = await run_in_threadpool(_finalize_keep, inp, body.get("options") or {}, body.get("selected_ranges") or [])
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)[:300]}, status_code=400)
+    return JSONResponse({"keep_segments": keep, "duration_sec": round(sum(k["end"] - k["start"] for k in keep), 3)})
+
+
+async def api_transcript(request: Request):
+    """Cached transcript for an input (source time), or remapped onto the edited timeline when keep segments are given."""
+    body = await request.json()
+    inputs = [win_to_wsl(x) for x in (body.get("inputs") or [body.get("input", "")]) if x]
+    inp = str(_combined_path(inputs)) if len(inputs) > 1 else (inputs[0] if inputs else "")
+    cache_file = _cache_path_for(inp) if inp else None
+    if not cache_file or not cache_file.exists():
+        return JSONResponse({"transcript": None, "cached": False})
+    cache = json.loads(cache_file.read_text())
+    keep = body.get("keep_segments")
+    if keep:
+        transcript, speech = _remap_transcript(cache, keep)
+    else:
+        transcript, speech = cache["transcript"], cache["speech_segments"]
+    return JSONResponse({"cached": True, "language": cache.get("detected_language"),
+                         "transcript": [{"start": t["start"], "end": t["end"], "src": t.get("src", t["start"]), "text": t.get("text", "").strip()} for t in transcript],
+                         "speech_segments": speech})
+
+
+# ---------------------------------------------------------------------------
+# Voiceover: voices, synthesis, AI script suggestions
+# ---------------------------------------------------------------------------
+
+async def api_tts_voices(request: Request):
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.utils import tts as _tts
+    engine = request.query_params.get("engine", "edge")
+    if engine not in _tts.ENGINES:
+        return JSONResponse({"error": "unknown engine", "voices": []}, status_code=400)
+    try:
+        voices = await run_in_threadpool(_tts.list_voices, engine)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)[:300], "voices": []})
+    return JSONResponse({"engine": engine, "voices": voices, "engines": _tts.engine_status(), "models": _tts.OPENAI_MODELS})
+
+
+async def api_tts_generate(request: Request):
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.utils import tts as _tts
+    body = await request.json()
+    spec = {k: body.get(k) for k in ("engine", "model", "voice", "text", "speed", "instructions")}
+    if not (spec.get("text") or "").strip():
+        return JSONResponse({"error": "empty text", "kind": "other"}, status_code=400)
+    try:
+        meta = await run_in_threadpool(_tts.synthesize_cached, spec, TTS_CACHE)
+    except _tts.TTSError as exc:
+        return JSONResponse({"error": str(exc), "kind": exc.kind})
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)[:300], "kind": "other"})
+    return JSONResponse({k: meta.get(k) for k in ("path", "duration_sec", "chars", "cost_usd", "cached", "hash")})
+
+
+async def api_tts_estimate(request: Request):
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.utils import tts as _tts
+    body = await request.json()
+    chars = sum(len((c.get("text") or "").strip()) for c in body.get("cues") or [])
+    return JSONResponse({"chars": chars, "cost_usd": _tts.estimate_cost_usd(body.get("engine", "edge"), body.get("model"), chars)})
+
+
+SCRIPT_SYSTEM = """You are a voiceover script writer for a talking-head video. You receive the video's
+transcript as numbered segments, each with its duration in seconds on the EDITED timeline.
+Write the narration that a professional would record over this video.
+
+Rules:
+- Return ONLY JSON: {"summary": "...", "cues": [{"i": <segment number>, "text": "..."}]}
+- One cue per segment, same numbering, same order. Skip a segment (omit it) only if it
+  carries nothing worth saying.
+- Each line MUST be speakable within the segment's duration at a relaxed pace:
+  budget about 2 words per second and use at most 85% of the seconds shown (a 4.0s
+  segment gets at most 7 words). Shorter is always fine; longer is not — cut words,
+  never squeeze them.
+- Keep the speaker's meaning, facts, names and numbers. Improve clarity, flow and
+  confidence: remove fillers, false starts and rambling; use complete, natural spoken
+  sentences; contractions are good; no bullet points, no stage directions.
+- Write in the transcript's language unless told otherwise. Keep the person's voice
+  (first person stays first person).
+- "summary": one or two sentences to the user about what you changed."""
+
+SCRIPT_SYSTEM_FREE = """You are a voiceover script writer. You receive a video transcript and instructions.
+Write one continuous narration script the user can record (or synthesize) over the video.
+Return ONLY JSON: {"summary": "...", "script": "..."}. Natural spoken sentences, complete
+thoughts, no bullet points, no stage directions, keep facts and names, remove fillers and
+rambling. Match the transcript's language unless told otherwise. Aim for a duration close to
+the video's length at ~2.3 words per second unless the instructions say otherwise."""
+
+
+async def api_script_suggest(request: Request):
+    """Ask an LLM to rewrite the (edited) transcript as a voiceover script, aligned per segment."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from src.utils.llm import LLMError, complete, resolve_llm
+    body = await request.json()
+    inputs = [win_to_wsl(x) for x in (body.get("inputs") or [body.get("input", "")]) if x]
+    inp = str(_combined_path(inputs)) if len(inputs) > 1 else (inputs[0] if inputs else "")
+    cache_file = _cache_path_for(inp) if inp else None
+    if not cache_file or not cache_file.exists():
+        return JSONResponse({"error": "No transcript yet — run Transcribe / Ask AI first.", "kind": "other"})
+    cache = json.loads(cache_file.read_text())
+    keep = body.get("keep_segments") or []
+    if keep:
+        transcript, _ = _remap_transcript(cache, keep)
+    else:
+        transcript = [{**t, "src": t["start"]} for t in cache["transcript"]]
+    transcript = [t for t in transcript if (t.get("text") or "").strip()]
+    if not transcript:
+        return JSONResponse({"error": "The transcript is empty.", "kind": "other"})
+    provider, model = resolve_llm({"provider": body.get("provider"), "model": body.get("model")}, body.get("director") or {})
+    style = (body.get("style") or "").strip()
+    mode = body.get("mode") or "segments"
+    if mode == "free":
+        total = transcript[-1]["end"]
+        lines = [f"[{_mmss(t['start'])}] {t['text'].strip()}" for t in transcript]
+        prompt = (f"Video length: {_mmss(total)}.\n" + (f"Instructions: {style}\n" if style else "") +
+                  "\nTranscript:\n" + "\n".join(lines))
+        system = SCRIPT_SYSTEM_FREE
+    else:
+        lines = [f"{i + 1}. ({max(0.5, t['end'] - t['start']):.1f}s) {t['text'].strip()}" for i, t in enumerate(transcript)]
+        prompt = ((f"Instructions from the user: {style}\n\n" if style else "") + "Segments:\n" + "\n".join(lines))
+        system = SCRIPT_SYSTEM
+    try:
+        text, usage = await run_in_threadpool(complete, prompt, system, provider, model, 16000)
+    except LLMError as exc:
+        return JSONResponse({"error": str(exc), "kind": exc.kind})
+    m = re.search(r"\{.*\}", text, re.S)
+    try:
+        data = json.loads(m.group(0) if m else text)
+    except ValueError:
+        return JSONResponse({"error": f"The model did not return JSON: {text[:200]}", "kind": "other"})
+    cost = cost_for(provider, {**usage, "model": usage.get("model") or model})
+    if mode == "free":
+        return JSONResponse({"mode": "free", "script": (data.get("script") or "").strip(), "summary": data.get("summary", ""),
+                             "usage": usage, "cost": cost, "provider": provider, "model": model})
+    cues = []
+    for c in data.get("cues") or []:
+        try:
+            i = int(c.get("i")) - 1
+        except (TypeError, ValueError):
+            continue
+        if 0 <= i < len(transcript) and (c.get("text") or "").strip():
+            t = transcript[i]
+            cues.append({"start": t["start"], "end": t["end"], "src": t.get("src", t["start"]),
+                         "text": c["text"].strip(), "original": t["text"].strip()})
+    return JSONResponse({"mode": "segments", "cues": cues, "summary": data.get("summary", ""), "usage": usage, "cost": cost,
+                         "provider": provider, "model": model})
+
+
+# ---------------------------------------------------------------------------
+# Projects
+# ---------------------------------------------------------------------------
+
+async def api_projects_list(request: Request):
+    projects = []
+    if PROJECTS_DIR.exists():
+        for f in PROJECTS_DIR.glob("*.json"):
+            try:
+                projects.append(_project_summary(json.loads(f.read_text())))
+            except (OSError, ValueError, KeyError):
+                continue
+    projects.sort(key=lambda p: p.get("updated") or "", reverse=True)
+    return JSONResponse({"projects": projects, "dir": str(PROJECTS_DIR)})
+
+
+async def api_project_get(request: Request):
+    try:
+        proj = _load_project(request.path_params["id"])
+    except ValueError:
+        return JSONResponse({"error": "bad id"}, status_code=400)
+    if not proj:
+        return JSONResponse({"error": "no such project"}, status_code=404)
+    return JSONResponse(proj)
+
+
+async def api_project_put(request: Request):
+    body = await request.json()
+    pid = request.path_params["id"]
+    if body.get("id") != pid:
+        return JSONResponse({"error": "id mismatch"}, status_code=400)
+    try:
+        existing = _load_project(pid)
+    except ValueError:
+        return JSONResponse({"error": "bad id"}, status_code=400)
+    if existing and body.get("updated") and existing.get("updated") and body["updated"] < existing["updated"] and not body.get("force"):
+        return JSONResponse({"error": "stale", "updated": existing["updated"]}, status_code=409)
+    if existing:
+        body.setdefault("created", existing.get("created"))
+        body.setdefault("renders", existing.get("renders", []))
+    body.pop("force", None)
+    proj = await run_in_threadpool(_save_project, body)
+    return JSONResponse({"ok": True, "updated": proj["updated"], "created": proj.get("created")})
+
+
+async def api_project_delete(request: Request):
+    try:
+        f = _project_path(request.path_params["id"])
+    except ValueError:
+        return JSONResponse({"error": "bad id"}, status_code=400)
+    f.unlink(missing_ok=True)
+    return JSONResponse({"ok": True})
+
+
+async def api_project_import(request: Request):
+    """Import a project.json (or a bundle folder containing one) into uploads/.projects."""
+    body = await request.json()
+    path = Path(win_to_wsl(body.get("path") or ""))
+    if path.is_dir():
+        path = path / "project.json"
+    if not path.is_file():
+        return JSONResponse({"error": f"project.json not found at {path}"}, status_code=400)
+    try:
+        proj = json.loads(path.read_text())
+    except ValueError:
+        return JSONResponse({"error": "not valid JSON"}, status_code=400)
+    if not proj.get("id") or not proj.get("source"):
+        return JSONResponse({"error": "not a project file"}, status_code=400)
+    # Restore the analysis cache next to it so the re-render skips Whisper.
+    cache_src = path.parent / "analysis_cache.json"
+    if cache_src.is_file():
+        try:
+            data = json.loads(cache_src.read_text())
+            key_input = (data.get("key") or {}).get("input")
+            if key_input:
+                dest = _cache_path_for(key_input)
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(cache_src, dest)
+        except (OSError, ValueError):
+            pass
+    if _project_path(proj["id"]).exists():
+        proj["id"] = f"{proj['id']}_{uuid.uuid4().hex[:4]}"
+    proj["imported_from"] = str(path)
+    _save_project(proj)
+    return JSONResponse({"ok": True, "project": proj})
 
 
 async def api_jobs_list(request: Request):
@@ -1253,6 +1714,18 @@ routes = [
     Route("/api/jobs/{id}", api_job_get),
     Route("/api/jobs/{id}/cancel", api_job_cancel, methods=["POST"]),
     Route("/api/jobs/{id}/config", api_job_config),
+    Route("/api/plan/finalize", api_plan_finalize, methods=["POST"]),
+    Route("/api/transcript", api_transcript, methods=["POST"]),
+    Route("/api/tts/voices", api_tts_voices),
+    Route("/api/tts/generate", api_tts_generate, methods=["POST"]),
+    Route("/api/tts/estimate", api_tts_estimate, methods=["POST"]),
+    Route("/api/script/suggest", api_script_suggest, methods=["POST"]),
+    Route("/api/projects", api_projects_list),
+    Route("/api/projects/import", api_project_import, methods=["POST"]),
+    Route("/api/projects/{id}", api_project_get),
+    Route("/api/projects/{id}", api_project_put, methods=["PUT"]),
+    Route("/api/projects/{id}", api_project_delete, methods=["DELETE"]),
+    Mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static"),
 ]
 
 app = Starlette(routes=routes)
