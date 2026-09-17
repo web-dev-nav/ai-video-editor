@@ -5,6 +5,7 @@ import { PROJECT, on, emit, newProject, loadProject, markClean, isDirty, setSave
 import { applyProjectToForms, syncFromForms, loadPresetIntoForms, loadAllModelPickers } from "./settings.js";
 import { loadClipsFromProject, clearClips, renderClips } from "./browser.js";
 import { refreshStale } from "./voiceover.js";
+import { adoptExistingAsRan } from "./autorun.js";
 
 let saving = false;
 function setSaveState(text, cls = "") { const el = byId("save-state"); el.textContent = text; el.className = cls; }
@@ -34,6 +35,7 @@ export async function open(id) {
   byId("proj-name").value = p.name || "";
   await loadClipsFromProject(p.source.inputs);
   applyProjectToForms();
+  adoptExistingAsRan();   // an edit saved before fingerprints existed counts as current
   refreshStale();
   setKeepSegments(p.keep_segments || [], !!p.keep_exact);
   loadAllModelPickers();

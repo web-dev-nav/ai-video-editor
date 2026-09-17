@@ -18,6 +18,8 @@
     <button class="small ghost" id="btn-save" title="Save now (projects autosave)">Save</button>
     <div class="spacer"></div>
     <span id="ffmpeg-pill" class="pill warn" hidden>ffmpeg missing</span>
+    <span class="pill" id="run-state"></span>
+    <button class="small ghost on" id="btn-autorun">⟳ Auto</button>
     <span class="keys" id="key-pills"></span>
     <button class="small ghost" id="btn-key" title="API keys (Claude, OpenAI, OpenRouter, NVIDIA)">Keys</button>
     <button class="primary" id="btn-run" disabled>Add a video to start</button>
@@ -56,34 +58,7 @@
     <!-- Edit (Auto / AI) -->
     <div class="pane" id="tab-ai" hidden>
       <div class="card">
-        <div class="modes">
-          <button class="mode" data-mode="auto" title="Fixed rules, offline: trims silence, deletes listed filler words, drops takes marked 'cut cut'">⚙️ Auto</button>
-          <button class="mode ai" data-mode="ai" title="Claude / ChatGPT reads the transcript and edits like a person — fillers, stumbles, repeats, plus your instructions">✨ AI editor</button>
-        </div>
-        <div id="panel-auto">
-          <div class="hint">Rule-based · offline · free</div>
-          <details><summary>Silence <span class="tag" id="tag-silence"></span></summary><div class="body"><div class="row">
-            <label class="field"><span>Min silence (ms)</span><input type="number" id="silence.min_silence_ms" step="50"></label>
-            <label class="field"><span>Keep around speech (ms)</span><input type="number" id="silence.padding_ms" step="10"></label>
-            <label class="field" title="Adjacent speech closer than this is not cut apart"><span>Merge gap (s)</span><input type="number" id="silence.min_gap_sec" step="0.1"></label>
-            <label class="field" title="Extra room before/after each cut"><span>Breathing room (s)</span><input type="number" id="silence.padding_sec" step="0.1"></label>
-          </div></div></details>
-          <details><summary>Failed takes <span class="tag" id="tag-restarts"></span></summary><div class="body">
-            <label class="switch"><input type="checkbox" id="restarts.enabled"> Remove failed takes</label>
-            <label class="field" title="Say one of these to mark a restart"><span>Trigger phrases</span><input type="text" id="restarts.trigger_phrases"></label>
-            <label class="switch"><input type="checkbox" id="restarts.detect_repeated_starts"> Detect repeated sentence starts</label>
-            <label class="field"><span>Drop bursts shorter than (s)</span><input type="number" id="restarts.max_burst_duration_sec" step="0.1"></label>
-          </div></details>
-          <details><summary>Filler words <span class="tag" id="tag-fillers"></span></summary><div class="body">
-            <label class="switch"><input type="checkbox" id="fillers.enabled"> Remove filler words</label>
-            <label class="field"><span>English</span><textarea id="fillers.words_en"></textarea></label>
-            <label class="field"><span>Hindi</span><textarea id="fillers.words_hi"></textarea></label>
-            <label class="field"><span>Russian</span><textarea id="fillers.words_ru"></textarea></label>
-            <label class="field" title="0 = remove every detected filler"><span>Ignore shorter than (s)</span><input type="number" id="fillers.min_filler_duration_sec" step="0.05"></label>
-          </div></details>
-          <div class="actions"><button class="small ghost" id="btn-auto-oneshot" title="Skip the review: cut and render in one go">⚡ Quick render</button></div>
-        </div>
-        <div id="panel-ai" hidden>
+        <div id="panel-ai">
           <div class="row">
             <label class="field"><span>Provider</span>
               <select id="director.provider"><option value="anthropic">Claude</option><option value="openai">ChatGPT</option><option value="openrouter">OpenRouter</option><option value="nvidia">NVIDIA NIM</option></select></label>
@@ -266,6 +241,28 @@
         </div>
         <div class="hint warn" id="extras-hint" hidden></div>
       </div></details>
+      <details class="quiet" id="adv"><summary>Advanced <span class="tag">rules, colour, encoding</span></summary><div class="body">
+        <div class="hint">You should not need these. The AI editor decides the cuts; the rules below only
+        shape the speech detection it works from.</div>
+          <details><summary>Silence <span class="tag" id="tag-silence"></span></summary><div class="body"><div class="row">
+            <label class="field"><span>Min silence (ms)</span><input type="number" id="silence.min_silence_ms" step="50"></label>
+            <label class="field"><span>Keep around speech (ms)</span><input type="number" id="silence.padding_ms" step="10"></label>
+            <label class="field" title="Adjacent speech closer than this is not cut apart"><span>Merge gap (s)</span><input type="number" id="silence.min_gap_sec" step="0.1"></label>
+            <label class="field" title="Extra room before/after each cut"><span>Breathing room (s)</span><input type="number" id="silence.padding_sec" step="0.1"></label>
+          </div></div></details>
+          <details><summary>Failed takes <span class="tag" id="tag-restarts"></span></summary><div class="body">
+            <label class="switch"><input type="checkbox" id="restarts.enabled"> Remove failed takes</label>
+            <label class="field" title="Say one of these to mark a restart"><span>Trigger phrases</span><input type="text" id="restarts.trigger_phrases"></label>
+            <label class="switch"><input type="checkbox" id="restarts.detect_repeated_starts"> Detect repeated sentence starts</label>
+            <label class="field"><span>Drop bursts shorter than (s)</span><input type="number" id="restarts.max_burst_duration_sec" step="0.1"></label>
+          </div></details>
+          <details><summary>Filler words <span class="tag" id="tag-fillers"></span></summary><div class="body">
+            <label class="switch"><input type="checkbox" id="fillers.enabled"> Remove filler words</label>
+            <label class="field"><span>English</span><textarea id="fillers.words_en"></textarea></label>
+            <label class="field"><span>Hindi</span><textarea id="fillers.words_hi"></textarea></label>
+            <label class="field"><span>Russian</span><textarea id="fillers.words_ru"></textarea></label>
+            <label class="field" title="0 = remove every detected filler"><span>Ignore shorter than (s)</span><input type="number" id="fillers.min_filler_duration_sec" step="0.05"></label>
+          </div></details>
       <details><summary>Colour (LUT) <span class="tag" id="tag-lut"></span></summary><div class="body">
         <label class="field"><span>LUT from <code>luts/</code></span><select id="lut-select"><option value="">None</option></select></label>
         <label class="field"><span>…or a .cube file</span><input type="text" id="lut" placeholder="C:\path\to\look.cube"></label>
@@ -276,6 +273,7 @@
           <label class="field"><span>Quality</span><input type="number" id="encoding.quality" min="0" max="100"></label>
         </div>
         <label class="field"><span>Audio bitrate</span><input type="text" id="encoding.audio_bitrate"></label>
+      </div></details>
       </div></details>
       <div class="actions" style="justify-content:flex-end">
         <button class="small ghost" id="btn-save-preset" title="Use these settings for new projects">💾 Remember</button><button class="small ghost" id="btn-reset" title="Back to the defaults">Reset</button>

@@ -19,7 +19,7 @@ export function collectOptions() {
     lut: byId("lut").value.trim() || byId("lut-select").value || null,
     hook: { enabled: byId("hook.enabled").checked, duration_sec: num("hook.duration_sec"), provider: byId("hook.provider").value, model: byId("hook.model").value.trim() },
     chapters: { enabled: byId("chapters.enabled").checked, provider: byId("chapters.provider").value, model: byId("chapters.model").value.trim() },
-    director: { enabled: PROJECT.mode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, skill_brief: skillBrief(byId("director.skill").value) || "", instructions: byId("director.instructions").value.trim() },
+    director: { enabled: true, provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, skill_brief: skillBrief(byId("director.skill").value) || "", instructions: byId("director.instructions").value.trim() },
     encoding: { codec: byId("encoding.codec").value, quality: num("encoding.quality"), audio_bitrate: byId("encoding.audio_bitrate").value.trim() },
     bundle: byId("bundle").checked,
     output_format: { kind: byId("output_format").value, focus: byId("output_focus").value },
@@ -101,19 +101,12 @@ export function applyProjectToForms() {
   byId("music.loop").checked = m.loop !== false; byId("music.duck").checked = m.duck !== false; byId("music.duck_db").value = m.duck_db ?? -12;
   byId("mix.original_gain_db").value = P.mix.original_gain_db ?? 0; byId("mix.original_gain_db-range").value = P.mix.original_gain_db ?? 0;
   byId("mix.loudnorm").checked = !!P.mix.loudnorm; byId("mix.loudness_target").value = P.mix.loudness_target ?? -14;
-  setMode(P.mode || "auto", false);
   loadVoices();
   updateTags();
 }
 
-// ─────────────── mode chooser ───────────────
-export function setMode(m, dirty = true) {
-  PROJECT.mode = m; localStorage.setItem("ave.mode", m);
-  $$(".mode").forEach((el) => el.classList.toggle("active", el.dataset.mode === m));
-  byId("panel-auto").hidden = m !== "auto"; byId("panel-ai").hidden = m !== "ai";
-  if (dirty) { syncFromForms(); markDirty("mode"); }
-  emit("mode");
-}
+// The AI editor is the only editing mode; the rule engine still runs server-side to
+// give the director its voice-activity segments, configured under Inspector → Advanced.
 
 // ─────────────── tags / hints ───────────────
 export function updateTags() {
@@ -319,7 +312,6 @@ export function initSettings() {
   byId("whisper_model").addEventListener("change", () => { updateWhisperBox(); byId("whisper-change-note").hidden = !PROJECT.transcript; });
   byId("language").addEventListener("change", () => { byId("whisper-change-note").hidden = !PROJECT.transcript; });
   byId("btn-whisper-dl").onclick = async () => { const m = byId("whisper_model").value; WHISPER[m] = await api.whisperDownload(m); updateWhisperBox(); };
-  $$(".mode").forEach((el) => (el.onclick = () => setMode(el.dataset.mode)));
   ["director", "hook", "chapters"].forEach(bindModelPicker);
   byId("btn-skills").onclick = (e) => { e.preventDefault(); loadSkills(); flash(byId("btn-skills"), "✓"); };
   byId("director.skill").addEventListener("change", updateSkillDesc);

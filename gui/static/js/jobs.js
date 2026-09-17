@@ -5,26 +5,37 @@ import { BOOT, PROJECT, SEL, on, emit, select, markDirty, setKeepSegments, selec
 import { syncFromForms, collectOptions } from "./settings.js";
 import { renderTranscript } from "./preview.js";
 import { disp } from "./translit.js";
+import { markRan, renderStale, paintStatus, setAutoJob, isOn, snapshot } from "./autorun.js";
 
 let currentJob = null, currentJobStatus = null, pollTimer = null, seenEvents = 0;
+// Fingerprints as they were when each job was submitted (see autorun.markRan).
+const jobKeys = new Map();
 export const busy = () => currentJob && ["running", "queued"].includes(currentJobStatus);
 
 // ─────────────── the Render button ───────────────
 export function updateRunButton() {
   const b = byId("btn-run"), P = PROJECT;
+  paintStatus();
   if (!P || !P.source.inputs.length) { b.disabled = true; b.textContent = "Add a video to start"; b.title = ""; return; }
   const multi = P.source.inputs.length > 1 ? ` (${P.source.inputs.length} clips)` : "";
   b.disabled = !!busy();
   if (busy()) { b.textContent = "Working…"; return; }
-  if (hasCuts()) { b.textContent = `🎬 Render${multi}`; b.title = "Render the timeline as it is now (cuts, voiceover, music)"; return; }
-  if (P.mode === "auto") { b.textContent = `⚙️ Analyze & cut${multi}`; b.title = "Transcribe and apply the Auto rules; review the cuts on the timeline, then Render"; }
-  else { b.textContent = `✨ Ask AI for a plan${multi}`; b.title = "The AI proposes cuts; review them, then Render"; }
+  if (hasCuts()) {
+    const again = renderStale();
+    b.textContent = `🎬 ${again ? "Re-render · changed" : "Render"}${multi}`;
+    b.title = again ? "The edit changed since the last render — render it again"
+                    : "Render the timeline as it is now (cuts, voiceover, music)";
+    return;
+  }
+  b.textContent = `✨ Ask AI for a plan${multi}`; b.title = "The AI proposes cuts; review them, then Render";
 }
 
 export async function submit(mode, extra = {}) {
   const P = PROJECT;
   if (!P.source.inputs.length) return;
+  const auto = !!extra.auto; delete extra.auto;      // client-side flag, never sent to the server
   syncFromForms();
+  const snap = snapshot();
   const options = { ...P.options, voiceover: P.voiceover, music: P.music, mix: P.mix };
   const body = { mode, inputs: P.source.inputs, input: P.source.inputs[0], output: P.output, options, project_id: P.id, ...extra };
   const usesAI = mode === "plan" || (mode === "process" && options.director.enabled);
@@ -36,15 +47,18 @@ export async function submit(mode, extra = {}) {
   }
   try {
     const job = await api.jobCreate(body);
-    watchJob(job.id); refreshJobs(); openJobs(true);
+    jobKeys.set(job.id, snap);
+    setAutoJob(auto ? job.id : null);
+    watchJob(job.id); refreshJobs(); if (!auto) openJobs(true);
   } catch (e) { showAlert("other", `<b>Could not start:</b> ${esc(e.message)}`); }
 }
 function runClick() {
   const P = PROJECT;
   if (hasCuts()) submit("render", { keep_segments: P.keep_segments, carry_cost: P.plan_cost, carry_plan: reviewedPlan() });
-  else if (P.mode === "auto") submit("analyze");
   else submit("plan");
 }
+export const currentJobId = () => currentJob;
+export const cancelJob = (id) => api.jobCancel(id);
 function reviewedPlan() {
   const P = PROJECT; if (!P.plan) return null;
   const on = P.pieces.filter((p) => p.enabled), off = P.pieces.filter((p) => !p.enabled);
@@ -88,17 +102,15 @@ function resetCutsClick() {
   if (!PROJECT.pieces.length && !hasCuts()) return;
   if (!confirm("Clear every cut and start the edit over?\n\nThe transcript is kept, so re-analyzing will not transcribe again.")) return;
   resetCuts();
-  byId("result").innerHTML = `<div class="banner info">Cuts cleared — the transcript is still here. ${PROJECT.mode === "ai" ? "Ask AI for a plan" : "Analyze & cut"} to start over.</div>`;
+  byId("result").innerHTML = `<div class="banner info">Cuts cleared — the transcript is still here. ${isOn() ? "A fresh plan is on its way." : "Press <b>Ask AI for a plan</b> to start over."}</div>`;
 }
 function replanClick() {
-  if (PROJECT.mode !== "ai") { showAlert("other", "<b>Re-plan needs the AI editor.</b> Switch the Edit tab to ✨ AI editor, or press <b>Analyze &amp; cut</b> to run the Auto rules again."); return; }
   if (PROJECT.pieces.length && !confirm("Discard these cuts and ask the AI for a fresh plan?\n\nThe transcript is reused, so you only pay for the AI call.")) return;
   resetCuts();
   submit("plan");
 }
 function updatePlanActions() {
   const has = !!(PROJECT.pieces.length || hasCuts());
-  byId("btn-replan").hidden = PROJECT.mode !== "ai";
   byId("btn-reset-cuts").disabled = !has;
 }
 
@@ -119,7 +131,7 @@ export function renderPlanBox() {
     html += `<div class="stats"><div class="stat"><b>${fmtSec(plan.duration_before_sec)} → ${fmtSec(outDuration())}</b><span>speech → edit</span></div><div class="stat"><b>${on}</b><span>pieces kept${plan.reordered ? " (reordered)" : ""}</span></div><div class="stat"><b>${off}</b><span>cuts</span></div></div>`;
     html += costLine(cost);
   } else {
-    html += `<div class="hint">Auto rules · tick a cut to put it back.</div>`;
+    html += `<div class="hint">Tick a cut to put it back.</div>`;
   }
   const piece = (p) => `<label class="plan-piece ${p.kind === "kept" ? "kept" : "removed"}${p.enabled ? " on" : ""}${SEL.kind === "piece" && SEL.id === p.id ? " selected" : ""}" data-id="${p.id}"><input type="checkbox" ${p.enabled ? "checked" : ""}>
       <div><span class="t">${mmss(p.start)} → ${mmss(p.end)} (${(p.end - p.start).toFixed(1)}s)</span>${p.note ? `<div class="why ok">${esc(p.note)}</div>` : ""}${p.reason ? `<div class="why">${esc(p.reason)}</div>` : ""}<div class="txt">${esc(disp(p.text) || "(no speech)")}</div></div></label>`;
@@ -174,8 +186,10 @@ async function poll() {
   $$("#phases span").forEach((s) => { const i = order.indexOf(s.dataset.phase), c = order.indexOf(cur); s.className = j.status === "done" ? "done" : (i < c ? "done" : i === c ? "active" : ""); });
   byId("btn-cancel").disabled = !(j.status === "queued" || j.status === "running");
   updateRunButton();
+  emit("job", j.status);
   if (["done", "error", "cancelled"].includes(j.status)) {
     clearInterval(pollTimer); pollTimer = null;
+    if (j.status !== "done") jobKeys.delete(j.id);   // failed/cancelled: nothing ran, stay stale
     byId("progress").classList.add(j.status === "done" ? "done" : "error");
     renderResult(j); refreshJobs();
   }
@@ -211,11 +225,13 @@ function renderResult(j) {
   byId("btn-play-output").onclick = () => emit("render-done", r);
   const cont = byId("btn-continue");
   if (cont) cont.onclick = () => emit("continue-from", { r, job: j });
+  if (j.mode === "process") markRan("plan", jobKeys.get(j.id));
   if (j.mode === "process" && !hasCuts() && r.keep_segments && r.keep_segments.length) {
     // one-shot edit: show the cuts it made so the project is re-editable
     P.plan = r.director_plan || null; P.plan_cost = j.cost || null;
     adoptKeep(r.keep_segments, r.director_plan, r.duration_original_sec, !r.director_plan);
   }
+  markRan("render", jobKeys.get(j.id));
   P.renders = P.renders || []; P.renders.push({ job_id: j.id, output_video: r.output_video, output_folder: r.output_folder, created: new Date().toISOString(), duration_edited_sec: r.duration_edited_sec, cost: j.cost });
   if (j.cost && !j.cost.carried) { P.cost = P.cost || {}; P.cost.total_usd = Math.round(((P.cost.total_usd || 0) + (j.cost.cost_total || 0)) * 1e5) / 1e5; }
   markDirty("render");
@@ -233,6 +249,7 @@ async function adoptKeep(keep, plan, total, exact) {
 
 async function onPlanResult(j) {
   const r = j.result, P = PROJECT;
+  markRan("plan", jobKeys.get(j.id));   // the settings this plan was made from, not the current ones
   P.transcript = r.transcript || [];
   P.source.pipeline_input = P.source.inputs.length > 1 ? j.input : P.source.inputs[0];
   if (r.plan) {
@@ -246,13 +263,7 @@ async function onPlanResult(j) {
     // analyze: transcript + rule-based cuts
     P.plan = null; P.plan_cost = null;
     const keep = r.keep_segments || [];
-    if (P.mode === "auto" && keep.length) {
-      P.pieces = piecesFromKeep(keep, r.duration_original_sec, P.transcript); P.keep_exact = true;
-      await refinalize();
-      byId("result").innerHTML = `<div class="banner ok">${P.pieces.filter((p) => !p.enabled).length} cuts found in ${fmtSec(r.processing_time_sec)}. Review, then <b>Render</b>.</div>`;
-    } else {
-      byId("result").innerHTML = `<div class="banner info">Transcribed in ${fmtSec(r.processing_time_sec)}.</div>`;
-    }
+    byId("result").innerHTML = `<div class="banner info">Transcribed in ${fmtSec(r.processing_time_sec)}.</div>`;
   }
   renderTranscript(); renderPlanBox(); markDirty("plan"); emit("source-analyzed"); updateRunButton();
 }
@@ -286,7 +297,6 @@ export function openJobs(open) {
 
 export function initJobs() {
   byId("btn-run").onclick = runClick;
-  byId("btn-auto-oneshot").onclick = () => { if (PROJECT.mode !== "auto") return; submit("process"); };
   byId("btn-ai-oneshot").onclick = () => submit("process");
   byId("btn-analyze").onclick = () => submit("analyze");
   byId("btn-reset-cuts").onclick = resetCutsClick;

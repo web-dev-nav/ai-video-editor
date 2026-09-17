@@ -9,7 +9,8 @@ import { initPreview, renderTranscript, highlightTranscript } from "./preview.js
 import { initTimeline } from "./timeline.js";
 import { initInspector } from "./inspector.js";
 import { initVoiceover } from "./voiceover.js";
-import { initJobs } from "./jobs.js";
+import { initJobs, submit, busy, currentJobId, cancelJob } from "./jobs.js";
+import { initAutoRun } from "./autorun.js";
 import { initProjects, bootProject } from "./projects.js";
 import { romanOn, setRoman } from "./translit.js";
 import { renderPlanBox } from "./jobs.js";
@@ -55,6 +56,7 @@ function setKeyPills() {
   initVoiceover();
   initJobs();
   initInspector();
+  initAutoRun({ submit, busy, currentJobId, cancel: cancelJob });
   initProjects();
   on("time", highlightTranscript);
   on("source-analyzed", renderTranscript);

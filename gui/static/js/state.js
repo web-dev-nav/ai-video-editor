@@ -21,7 +21,8 @@ export function newProject(name = "") {
   PROJECT = {
     version: 1, id: "p_" + uid("").slice(0, 8), name, created: null, updated: null,
     source: { inputs: [], pipeline_input: null, duration_sec: 0, width: 0, height: 0, derived_from: null },
-    mode: localStorage.getItem("ave.mode") || "auto",
+    mode: "ai",                          // the AI editor is the only editing mode
+    keys: { src: null, plan: null, render: null },   // fingerprints of the last run of each stage (see autorun.js)
     options: null,                       // filled by settings.collectOptions()
     output: "",
     skill_briefs: {},                    // skill id → edited brief, overriding skills/<id>.md for this project
@@ -55,6 +56,8 @@ export function loadProject(p) {
   PROJECT.mix = PROJECT.mix || { original_gain_db: 0, loudnorm: false, loudness_target: -14 };
   PROJECT.renders = PROJECT.renders || [];
   PROJECT.skill_briefs = PROJECT.skill_briefs || {};
+  PROJECT.keys = PROJECT.keys || { src: null, plan: null, render: null };
+  PROJECT.mode = "ai";                 // projects saved in the old Auto mode open as AI
   SEL.kind = null; SEL.id = null;
   rebuildTimeMap();
   emit("project");

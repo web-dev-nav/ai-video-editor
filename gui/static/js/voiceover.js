@@ -6,6 +6,7 @@ import { voiceName } from "./settings.js";
 import { currentOut, resetCueAudio } from "./preview.js";
 import { collectOptions } from "./settings.js";
 import { disp } from "./translit.js";
+import { isOn as autoRunOn } from "./autorun.js";
 
 // Everything that changes the audio of a cue → its hash key on the server. We only compare locally.
 function specOf(c) {
@@ -140,8 +141,21 @@ async function suggest() {
 async function loadVoicesIfNeeded() { const s = await import("./settings.js"); if (byId("vo.voice").options.length <= 1) s.loadVoices(); }
 function splitSentences(text) { return text.replace(/\s+/g, " ").trim().split(/(?<=[.!?…।])\s+/).map((s) => s.trim()).filter(Boolean); }
 
+// Changing the voice, engine, speed or a cue's text makes its audio stale (touchCue).
+// Regenerate it without being asked — unchanged cues hit the server-side TTS cache in
+// uploads/.cache/tts/, so this only costs anything when the audio really did change.
+let autoGenTimer = null;
+function autoGenerateStale() {
+  if (!autoRunOn() || !PROJECT.voiceover.enabled) return;
+  refreshStale();
+  if (!PROJECT.voiceover.cues.some((c) => (c.text || "").trim() && c.status !== "ready" && c.status !== "generating")) return;
+  clearTimeout(autoGenTimer);
+  autoGenTimer = setTimeout(() => generateAll(true), 1200);
+}
+
 export function initVoiceover() {
   byId("btn-suggest").onclick = suggest;
+  on("dirty", (what) => { if (what !== "cue-gen") autoGenerateStale(); });
   // the tab's switch is the only way in: everything else stays hidden until it is on
   on("settings-change", (id) => { if (id === "vo.enabled") { if (byId("vo.enabled").checked) loadVoicesIfNeeded(); emit("cues"); } });
   byId("btn-add-cue").onclick = () => addCue("", currentOut());
