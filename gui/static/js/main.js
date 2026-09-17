@@ -11,6 +11,7 @@ import { initInspector } from "./inspector.js";
 import { initVoiceover } from "./voiceover.js";
 import { initJobs, submit, busy, currentJobId, cancelJob } from "./jobs.js";
 import { initAutoRun } from "./autorun.js";
+import { initLayout } from "./layout.js";
 import { initProjects, bootProject } from "./projects.js";
 import { romanOn, setRoman } from "./translit.js";
 import { renderPlanBox } from "./jobs.js";
@@ -28,6 +29,7 @@ function setKeyPills() {
   newProject("");   // modules expect a project to exist; bootProject() replaces it
   byId("ffmpeg-pill").hidden = !!BOOT.ffmpeg;
   setKeyPills();
+  initLayout();
   initTabs();
   byId("alert-close").onclick = hideAlert;
   const romanBtn = byId("btn-roman");

@@ -25,7 +25,23 @@ export function currentOut() { return lastOut; }
 // rendered file is untouched. Pan offsets are screen pixels from the centre.
 const ZMIN = 1, ZMAX = 8;
 let zoom = 1, panX = 0, panY = 0;
-const stage = () => byId("stage");
+const stage = () => byId("stage"), frame = () => byId("frame");
+
+// Size #frame to the video's letterboxed rectangle. The video then fills that box, so
+// zooming crops into the frame on all four sides instead of expanding into the empty
+// space above and below it (which is what "it doesn't crop from the top" was).
+export function fitFrame() {
+  const v = video(), f = frame(), s = stage();
+  if (!v || !f || !s || !v.videoWidth || !v.videoHeight) return;
+  const cs = getComputedStyle(s);
+  const availW = s.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = s.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  if (availW <= 0 || availH <= 0) return;
+  const k = Math.min(availW / v.videoWidth, availH / v.videoHeight);
+  f.style.width = Math.max(1, Math.round(v.videoWidth * k)) + "px";
+  f.style.height = Math.max(1, Math.round(v.videoHeight * k)) + "px";
+  applyZoom();
+}
 
 function clampPan() {
   const v = video(), w = v.offsetWidth || 0, h = v.offsetHeight || 0;
@@ -77,7 +93,7 @@ export function isPlaying() { const v = video(); return v && !v.paused && !v.end
 export function setSource(path) {
   const v = video();
   byId("stage-empty").hidden = !!path;
-  v.hidden = !path;
+  byId("frame").hidden = !path;
   resetZoom();
   buildSeq();
   if (!path) { v.removeAttribute("src"); return; }
@@ -191,7 +207,7 @@ export function initPreview() {
   v.addEventListener("seeked", () => tick(true));
   v.addEventListener("loadedmetadata", () => {
     if (pendingLocal) { const p = pendingLocal; pendingLocal = null; v.currentTime = p.t; if (p.play) v.play().catch(() => {}); }
-    updateTotal(); tick(true);
+    fitFrame(); updateTotal(); tick(true);
   });
   v.addEventListener("ended", () => { if (seq && seqIdx + 1 < seq.length) { loadClip(seqIdx + 1, 0, true); return; } byId("btn-play").textContent = "▶"; stopExtras(); });
   // click toggles play — unless the click was really a pan drag
@@ -220,7 +236,8 @@ export function initPreview() {
   byId("btn-zoom-in").onclick = () => setZoom(zoom * 1.5);
   byId("btn-zoom-out").onclick = () => setZoom(zoom / 1.5);
   byId("btn-zoom-reset").onclick = resetZoom;
-  window.addEventListener("resize", applyZoom);
+  window.addEventListener("resize", fitFrame);
+  on("layout", fitFrame);      // a dragged panel changes the space the frame fits into
   applyZoom();
   byId("btn-play").onclick = togglePlay;
   byId("btn-stop").onclick = () => { seekOut(0); };
@@ -256,12 +273,28 @@ export function renderTranscript() {
   if (!tr || !tr.length) { box.innerHTML = `<span class="empty">Transcript</span>`; return; }
   box.innerHTML = tr.map((t, i) => `<span class="seg${hasCuts() && segAtSrc((t.start + t.end) / 2) < 0 ? " cut" : ""}" data-i="${i}" title="${mmss(t.start)}">${esc(disp(t.text))}</span> `).join("");
   box.querySelectorAll(".seg").forEach((el) => (el.onclick = () => { const t = tr[+el.dataset.i]; seekSrc(t.start); }));
+  lastCur = -1;                       // the spans are new — re-highlight on the next tick
+  highlightTranscript(lastOut);
 }
+let lastCur = -1;
 export function highlightTranscript(out) {
   const tr = PROJECT.transcript; if (!tr || !tr.length) return;
   const src = outToSrc(out);
-  const els = byId("transcript").querySelectorAll(".seg");
-  let cur = -1; tr.forEach((t, i) => { if (src >= t.start && src <= t.end + 0.3) cur = i; });
+  const box = byId("transcript"), els = box.querySelectorAll(".seg");
+  // The spoken line is the last one whose window contains the playhead.
+  let cur = -1;
+  for (let i = 0; i < tr.length; i++) if (src >= tr[i].start && src <= tr[i].end + 0.3) cur = i;
+  // Nothing matched (a gap between sentences): hold the previous line rather than
+  // dropping the highlight, which is what made it flicker and look stuck.
+  if (cur < 0) return;
+  if (cur === lastCur) return;
+  lastCur = cur;
   els.forEach((el, i) => el.classList.toggle("now", i === cur));
-  if (cur >= 0 && isPlaying()) { const el = els[cur]; const box = byId("transcript"); if (el.offsetTop < box.scrollTop || el.offsetTop > box.scrollTop + box.clientHeight - 20) box.scrollTop = el.offsetTop - 20; }
+  const el = els[cur]; if (!el) return;
+  // #transcript is position:relative, so offsetTop is measured against it. Without that
+  // this compared a page-absolute offset with scrollTop and pinned the strip at the end.
+  const top = el.offsetTop, h = el.offsetHeight;
+  if (top < box.scrollTop || top + h > box.scrollTop + box.clientHeight) {
+    box.scrollTo({ top: Math.max(0, top - (box.clientHeight - h) / 2), behavior: "smooth" });
+  }
 }

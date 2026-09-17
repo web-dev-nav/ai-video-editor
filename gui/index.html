@@ -28,6 +28,7 @@
 
   <!-- ═══════════ left panel ═══════════ -->
   <aside id="left">
+    <div class="splitter v" id="split-left" title="Drag to resize · double-click to reset"></div>
     <div class="tabs">
       <button data-tab="media" class="active">📁 Media</button>
       <button data-tab="ai">✂️ Edit</button>
@@ -188,7 +189,7 @@
   <main id="center">
     <div id="stage">
       <div class="empty" id="stage-empty"><b>No video yet</b>Pick one under 📁 Media.</div>
-      <video id="preview" preload="metadata" hidden></video>
+      <div id="frame" hidden><video id="preview" preload="metadata"></video></div>
     </div>
     <div id="transport">
       <button class="icon" id="btn-play" title="Play / pause (space)">▶</button>
@@ -200,11 +201,13 @@
       <button class="small ghost" id="btn-roman" title="Show Hindi (Devanagari) as Roman letters — display only">अ→A</button>
       <span class="note" id="preview-note"></span>
     </div>
+    <div class="splitter h" id="split-transcript" title="Drag to resize · double-click to reset"></div>
     <div id="transcript"><span class="empty">Transcript</span></div>
   </main>
 
   <!-- ═══════════ right: inspector ═══════════ -->
   <aside id="right">
+    <div class="splitter v" id="split-right" title="Drag to resize · double-click to reset"></div>
     <div class="head"><span id="insp-title">Export</span><span class="tag" id="insp-tag"></span></div>
 
     <div class="sect" id="insp-default">
@@ -318,6 +321,7 @@
 
   <!-- ═══════════ bottom: timeline + jobs ═══════════ -->
   <section id="bottom">
+    <div class="splitter h" id="split-bottom" title="Drag to resize the timeline · double-click to reset"></div>
     <div id="timeline">
       <div id="tl-head">
         <div class="tools"><button id="tl-zoom-out" title="Zoom out">−</button><button id="tl-zoom-in" title="Zoom in">+</button><button id="tl-fit" title="Fit whole video">fit</button></div>

@@ -31,7 +31,7 @@ export function render() {
     spans.forEach((c) => {
       const b = document.createElement("div"); b.className = "blk clip"; b.style.left = x(c.s) + "px"; b.style.width = Math.max(2, x(c.e) - x(c.s) - 2) + "px";
       b.style.background = CLIP_COLORS[c.i % CLIP_COLORS.length];
-      b.innerHTML = `${c.i + 1}. ${esc(c.name)}<small>${mmss(c.e - c.s)}${spans.length === 1 ? ` · ${P.mode === "ai" ? "Ask AI for a plan" : "Analyze"} to see cuts` : ""}</small><button class="x" title="Remove this clip from the timeline">✕</button>`;
+      b.innerHTML = `${c.i + 1}. ${esc(c.name)}<small>${mmss(c.e - c.s)}${spans.length === 1 ? " · Ask AI for a plan to see cuts" : ""}</small><button class="x" title="Remove this clip from the timeline">✕</button>`;
       b.title = spans.length > 1 ? `${c.name} · drag to reorder · ✕ to remove` : `${c.name} · ✕ to remove`;
       b.ondblclick = () => emit("seek", c.s);
       if (spans.length > 1) makeClipDraggable(b, c, spans);
@@ -245,5 +245,6 @@ export function initTimeline() {
   on("source", () => { fit(); });
   on("project", () => { fit(); });
   window.addEventListener("resize", () => render());
+  on("layout", () => render());   // a dragged panel changes the track width
   fit();
 }
