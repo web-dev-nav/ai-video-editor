@@ -36,4 +36,10 @@ THE END:
 
 PACING: tighten hesitations and long pauses more aggressively than in a
 cinematic edit, but keep breaths inside sentences — choppy speech reads as
-low quality. Aim to remove roughly 15–30% of the runtime unless told otherwise.
+low quality.
+
+HOW MUCH TO CUT: aim to remove 20–35% of the runtime unless told otherwise, and
+be hardest on the first 30 seconds — that is where the audience is actually lost.
+If your plan keeps more than ~85% of the original you have been too cautious: the
+lead-in, the repeated points and the wind-down are almost always still in there.
+State the percentage you removed in the summary.

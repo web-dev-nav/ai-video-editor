@@ -91,7 +91,7 @@
               <select id="director.model-select"></select><input type="text" id="director.model" placeholder="custom model id" style="margin-top:5px" hidden></label>
           </div>
           <div class="hint warn" id="director-key-hint" hidden></div>
-          <label class="field"><span>Style <button class="small ghost" id="btn-skill-view" title="Read the editing brief" style="padding:0 4px">ⓘ</button><button class="small ghost" id="btn-skills" title="Reload skills/" style="padding:0 4px">↻</button></span><select id="director.skill"></select></label>
+          <label class="field"><span>Style <button class="small ghost" id="btn-skill-view" title="Read or edit the brief the AI is given" style="padding:0 4px">ⓘ</button><button class="small ghost" id="btn-skills" title="Reload skills/" style="padding:0 4px">↻</button></span><select id="director.skill"></select></label>
           <div class="hint" id="skill-desc"></div>
           <label class="field"><span>Instructions <span class="opt">optional</span></span>
             <textarea id="director.instructions" style="min-height:64px" placeholder="e.g. Keep it under 60 seconds. Drop the part about the weather."></textarea></label>
@@ -104,7 +104,9 @@
         </div>
       </div>
       <div class="card" id="plan-card" hidden>
-        <h2>Cuts <span class="tag" id="plan-tag"></span></h2>
+        <h2>Cuts <span class="tag" id="plan-tag"></span>
+          <button class="small ghost" id="btn-replan" title="Throw these cuts away and ask the AI again — the transcript is kept, so nothing is transcribed twice">↻ Re-plan</button>
+          <button class="small ghost danger" id="btn-reset-cuts" title="Clear every cut and start the edit over — the transcript is kept">Start over</button></h2>
         <div id="plan-box"></div>
       </div>
     </div>
@@ -218,6 +220,7 @@
       <button class="icon" id="btn-stop" title="Back to start">⏮</button>
       <span class="time"><b id="time-out">0:00.0</b> / <span id="time-total">0:00</span></span>
       <div class="seg" id="preview-src"><button data-src="source" class="active" title="Plays the source and skips the cut parts">Source</button><button data-src="output" hidden title="Plays the last rendered file">Rendered</button></div>
+      <div class="seg" id="preview-zoom"><button id="btn-zoom-out" title="Zoom out (−)">−</button><button id="btn-zoom-reset" title="Fit the whole frame (0)">100%</button><button id="btn-zoom-in" title="Zoom in (+) · Ctrl/⌘+wheel over the video · drag to pan">+</button></div>
       <label class="switch" style="margin:0" title="Hear voiceover cues and music while previewing (approximate, no ducking)"><input type="checkbox" id="preview-mix" checked> 🔊</label>
       <button class="small ghost" id="btn-roman" title="Show Hindi (Devanagari) as Roman letters — display only">अ→A</button>
       <span class="note" id="preview-note"></span>
@@ -359,7 +362,10 @@
   <input type="password" id="key-input" placeholder="paste key (empty = remove)">
   <div class="actions" style="justify-content:flex-end"><button id="key-cancel" class="small ghost">Cancel</button><button id="key-save" class="small primary">Save</button></div>
 </dialog>
-<dialog id="skill-dialog"><h3 id="skill-title"></h3><p class="hint" id="skill-path"></p><pre class="chapters" id="skill-text" style="max-height:60vh;overflow:auto"></pre><div class="actions" style="justify-content:flex-end"><button id="skill-close" class="small">Close</button></div></dialog>
+<dialog id="skill-dialog"><h3 id="skill-title"></h3><p class="hint" id="skill-path"></p>
+  <textarea id="skill-text" style="min-height:46vh;max-height:60vh;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.5" spellcheck="false"></textarea>
+  <p class="hint" id="skill-edit-note">This is the brief the AI editor is given. Edit it to change how it cuts — your version is saved with this project and does not touch <code>skills/</code>.</p>
+  <div class="actions" style="justify-content:flex-end"><button id="skill-revert" class="small ghost" title="Go back to the brief shipped in skills/">Reset to default</button><button id="skill-close" class="small ghost">Cancel</button><button id="skill-save" class="small primary">Use this brief</button></div></dialog>
 <dialog id="config-dialog"><h3>Config passed to the CLI</h3><pre class="chapters" id="config-text" style="max-height:60vh;overflow:auto"></pre><div class="actions" style="justify-content:flex-end"><button id="config-close" class="small">Close</button></div></dialog>
 <dialog id="open-dialog">
   <h3>Open project</h3>

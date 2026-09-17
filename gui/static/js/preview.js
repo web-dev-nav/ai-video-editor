@@ -20,6 +20,45 @@ let pendingLocal = null; // seek to apply once the newly loaded clip has metadat
 
 export function currentOut() { return lastOut; }
 
+// ─────────────── preview zoom & pan ───────────────
+// Magnifies the frame itself (CSS transform) so a detail can be inspected; the
+// rendered file is untouched. Pan offsets are screen pixels from the centre.
+const ZMIN = 1, ZMAX = 8;
+let zoom = 1, panX = 0, panY = 0;
+const stage = () => byId("stage");
+
+function clampPan() {
+  const v = video(), w = v.offsetWidth || 0, h = v.offsetHeight || 0;
+  const mx = (w * (zoom - 1)) / 2, my = (h * (zoom - 1)) / 2;
+  panX = Math.max(-mx, Math.min(mx, panX));
+  panY = Math.max(-my, Math.min(my, panY));
+}
+function applyZoom() {
+  const v = video();
+  clampPan();
+  v.style.transform = zoom === 1 ? "" : `scale(${zoom}) translate(${panX / zoom}px, ${panY / zoom}px)`;
+  v.classList.toggle("zoomed", zoom > 1);
+  byId("btn-zoom-reset").textContent = `${Math.round(zoom * 100)}%`;
+  byId("btn-zoom-out").disabled = zoom <= ZMIN + 1e-6;
+  byId("btn-zoom-in").disabled = zoom >= ZMAX - 1e-6;
+}
+// Zoom to `z`, keeping the content under (cx, cy) — viewport coords — in place.
+export function setZoom(z, cx, cy) {
+  const v = video(), z1 = zoom;
+  const z2 = Math.max(ZMIN, Math.min(ZMAX, z));
+  if (Math.abs(z2 - z1) < 1e-6) return;
+  if (cx != null) {
+    const r = v.getBoundingClientRect();
+    const dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height / 2);
+    panX = dx - (z2 / z1) * (dx - panX);
+    panY = dy - (z2 / z1) * (dy - panY);
+  }
+  zoom = z2;
+  if (zoom === 1) { panX = 0; panY = 0; }
+  applyZoom();
+}
+export function resetZoom() { zoom = 1; panX = 0; panY = 0; applyZoom(); }
+
 function buildSeq() {
   const P = PROJECT;
   if (mode === "output" || P.source.pipeline_input || (P.source.clips || []).length < 2) { seq = null; return; }
@@ -39,6 +78,7 @@ export function setSource(path) {
   const v = video();
   byId("stage-empty").hidden = !!path;
   v.hidden = !path;
+  resetZoom();
   buildSeq();
   if (!path) { v.removeAttribute("src"); return; }
   const want = api.media(seq ? seq[0].path : path);
@@ -154,7 +194,34 @@ export function initPreview() {
     updateTotal(); tick(true);
   });
   v.addEventListener("ended", () => { if (seq && seqIdx + 1 < seq.length) { loadClip(seqIdx + 1, 0, true); return; } byId("btn-play").textContent = "▶"; stopExtras(); });
-  v.addEventListener("click", togglePlay);
+  // click toggles play — unless the click was really a pan drag
+  let dragged = false, panFrom = null;
+  v.addEventListener("click", () => { if (!dragged) togglePlay(); dragged = false; });
+  v.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    dragged = false;
+    if (zoom <= 1) return;
+    panFrom = { x: e.clientX, y: e.clientY, px: panX, py: panY };
+    v.setPointerCapture(e.pointerId);
+  });
+  v.addEventListener("pointermove", (e) => {
+    if (!panFrom) return;
+    const dx = e.clientX - panFrom.x, dy = e.clientY - panFrom.y;
+    if (!dragged && Math.abs(dx) + Math.abs(dy) > 4) dragged = true;
+    if (!dragged) return;
+    panX = panFrom.px + dx; panY = panFrom.py + dy; applyZoom();
+  });
+  v.addEventListener("pointerup", (e) => { if (panFrom) { v.releasePointerCapture(e.pointerId); panFrom = null; } });
+  stage().addEventListener("wheel", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !v.src) return;
+    e.preventDefault();
+    setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+  }, { passive: false });
+  byId("btn-zoom-in").onclick = () => setZoom(zoom * 1.5);
+  byId("btn-zoom-out").onclick = () => setZoom(zoom / 1.5);
+  byId("btn-zoom-reset").onclick = resetZoom;
+  window.addEventListener("resize", applyZoom);
+  applyZoom();
   byId("btn-play").onclick = togglePlay;
   byId("btn-stop").onclick = () => { seekOut(0); };
   byId("preview-src").querySelectorAll("button").forEach((b) => (b.onclick = () => setMode(b.dataset.src)));
@@ -165,6 +232,9 @@ export function initPreview() {
     if (e.code === "ArrowLeft") { e.preventDefault(); seekOut(Math.max(0, lastOut - (e.shiftKey ? 5 : 1))); }
     if (e.code === "ArrowRight") { e.preventDefault(); seekOut(lastOut + (e.shiftKey ? 5 : 1)); }
     if (e.code === "Home") { e.preventDefault(); seekOut(0); }
+    if (e.key === "+" || e.key === "=") { e.preventDefault(); setZoom(zoom * 1.5); }
+    if (e.key === "-" || e.key === "_") { e.preventDefault(); setZoom(zoom / 1.5); }
+    if (e.key === "0") { e.preventDefault(); resetZoom(); }
   });
   on("source", () => { if (mode === "output") setMode("source"); else setSource(PROJECT.source.pipeline_input || PROJECT.source.inputs[0] || null); setOutput(null); updateNote(); updateTotal(); });
   on("project", () => { setOutput(null); setMode("source"); updateTotal(); });

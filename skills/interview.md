@@ -20,3 +20,8 @@ feels like the same conversation on its best day.
 - Do not reorder unless the user asks; conversations reference what came before.
 - Open on the first genuinely interesting exchange, not on mic checks, greetings
   or "thanks for having me"; end on the last strong answer, not the sign-off.
+
+HOW MUCH TO CUT: a conversation recorded loose normally tightens by 20–35% without
+losing anything a listener would miss — second attempts at an answer, the wander
+before the point, and the mechanical hesitation add up fast. Keep the warmth and
+the rhythm; cut the length. State the percentage you removed in the summary.

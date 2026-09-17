@@ -817,6 +817,7 @@ def _build_config(p: dict) -> dict:
     cfg["director"]["mode"] = d.get("mode") or "ai"
     cfg["director"]["instructions"] = d.get("instructions") or ""
     cfg["director"]["skill"] = d.get("skill") or "clean"
+    cfg["director"]["skill_brief"] = (d.get("skill_brief") or "").strip()
 
     e = o.get("encoding", {})
     cfg["encoding"]["codec"] = e.get("codec", "libx264")

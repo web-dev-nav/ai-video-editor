@@ -90,11 +90,16 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     rule_keep: list[dict] = base_segments(context, config, mode) or []
 
     skill = get_skill(cfg.get("skill"))
+    # A brief edited in the GUI (or config) replaces the skill's own body for this run.
+    brief = (cfg.get("skill_brief") or "").strip()
+    custom = bool(brief) and (not skill or brief != skill["body"].strip())
     system = SYSTEM_PROMPT
-    if skill:
-        system += f"\n\nEDITING SKILL — {skill['name']}:\n{skill['body']}"
+    if skill or brief:
+        name = skill["name"] if skill else "Custom"
+        system += f"\n\nEDITING SKILL — {name}:\n{brief or skill['body']}"
+    label = f"{skill['name'] if skill else 'custom'}{' · edited' if custom else ''}" if (skill or brief) else "no skill"
     emit_progress("analysis", "director", 0.1,
-                  f"AI Director ({skill['name'] if skill else 'no skill'}): asking {provider}/{model or 'default'}...")
+                  f"AI Director ({label}): asking {provider}/{model or 'default'}...")
     prompt = _build_prompt(transcript, rule_keep, total, instructions or "(none — follow the editing skill)", mode)
 
     try:
@@ -122,7 +127,8 @@ def run(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
         "model": usage.get("model") or model,
         "mode": mode,
         "skill": skill["id"] if skill else None,
-        "skill_name": skill["name"] if skill else None,
+        "skill_name": f"{skill['name']} (edited)" if (skill and custom) else (skill["name"] if skill else ("Custom brief" if brief else None)),
+        "skill_custom": custom,
         "instructions": instructions,
         "usage": usage,
         "keep": [

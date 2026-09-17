@@ -24,6 +24,7 @@ export function newProject(name = "") {
     mode: localStorage.getItem("ave.mode") || "auto",
     options: null,                       // filled by settings.collectOptions()
     output: "",
+    skill_briefs: {},                    // skill id → edited brief, overriding skills/<id>.md for this project
     plan: null, plan_cost: null,         // director plan + the cost of the call that produced it
     transcript: null,                    // [{start,end,text}] in SOURCE time
     pieces: [],                          // [{id, kind: kept|removed, start, end, text, note, reason, enabled}] (source time)
@@ -53,6 +54,7 @@ export function loadProject(p) {
   PROJECT.music = PROJECT.music || {};
   PROJECT.mix = PROJECT.mix || { original_gain_db: 0, loudnorm: false, loudness_target: -14 };
   PROJECT.renders = PROJECT.renders || [];
+  PROJECT.skill_briefs = PROJECT.skill_briefs || {};
   SEL.kind = null; SEL.id = null;
   rebuildTimeMap();
   emit("project");

@@ -47,5 +47,11 @@ ENDING: end on the line the viewer should carry out — an image, a claim, a
 question — not on a summary or a goodbye. If the recording trails off, cut it
 at the last strong sentence.
 
+HOW MUCH TO CUT: a cinematic pass on raw talking-head material normally removes
+30–50% of the runtime. You are shaping, not tidying — if your plan keeps more
+than ~75% of the original, you have not applied the three-jobs rule hard enough;
+go through it again and cut the passages that merely restate or explain. Commit
+to the shape: a decisive short edit beats a safe long one.
+
 In the summary, name the emotional spine you cut around and why you chose the
-opening and closing lines.
+opening and closing lines, and state what percentage of the runtime you removed.

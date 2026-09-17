@@ -19,7 +19,7 @@ export function collectOptions() {
     lut: byId("lut").value.trim() || byId("lut-select").value || null,
     hook: { enabled: byId("hook.enabled").checked, duration_sec: num("hook.duration_sec"), provider: byId("hook.provider").value, model: byId("hook.model").value.trim() },
     chapters: { enabled: byId("chapters.enabled").checked, provider: byId("chapters.provider").value, model: byId("chapters.model").value.trim() },
-    director: { enabled: PROJECT.mode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, instructions: byId("director.instructions").value.trim() },
+    director: { enabled: PROJECT.mode === "ai", provider: byId("director.provider").value, model: byId("director.model").value.trim(), mode: byId("director.mode").value, skill: byId("director.skill").value, skill_brief: skillBrief(byId("director.skill").value) || "", instructions: byId("director.instructions").value.trim() },
     encoding: { codec: byId("encoding.codec").value, quality: num("encoding.quality"), audio_bitrate: byId("encoding.audio_bitrate").value.trim() },
     bundle: byId("bundle").checked,
     output_format: { kind: byId("output_format").value, focus: byId("output_focus").value },
@@ -202,7 +202,40 @@ export async function loadSkills() {
   sel.value = SKILLS.some((sk) => sk.id === cur) ? cur : (SKILLS[0] ? SKILLS[0].id : "");
   updateSkillDesc();
 }
-function updateSkillDesc() { const sk = SKILLS.find((x) => x.id === byId("director.skill").value); byId("director.skill").title = sk ? sk.description : ""; byId("skill-desc").textContent = ""; }
+function updateSkillDesc() {
+  const id = byId("director.skill").value, sk = SKILLS.find((x) => x.id === id);
+  byId("director.skill").title = sk ? sk.description : "";
+  byId("skill-desc").innerHTML = skillBrief(id) ? `<span class="pill ok" title="This project uses an edited brief — press ⓘ to read or reset it">brief edited for this project</span>` : "";
+}
+// The brief this project uses for `id`: the edited one, else the shipped skills/<id>.md body.
+export function skillBrief(id) { return (PROJECT && PROJECT.skill_briefs && PROJECT.skill_briefs[id]) || ""; }
+function shippedBrief(id) { const sk = SKILLS.find((x) => x.id === id); return sk ? sk.body : ""; }
+
+function openSkillDialog() {
+  const id = byId("director.skill").value, sk = SKILLS.find((x) => x.id === id);
+  if (!sk) return;
+  const edited = skillBrief(id);
+  byId("skill-title").textContent = `${sk.emoji || ""} ${sk.name}${edited ? " · edited" : ""}`;
+  byId("skill-path").textContent = `${SKILLS_DIR}/${sk.id}.md${edited ? " — overridden for this project" : ""}`;
+  byId("skill-text").value = edited || sk.body;
+  byId("skill-revert").disabled = !edited;
+  byId("skill-dialog").showModal();
+}
+function saveSkillBrief() {
+  const id = byId("director.skill").value, text = byId("skill-text").value.trim();
+  PROJECT.skill_briefs = PROJECT.skill_briefs || {};
+  if (!text || text === shippedBrief(id).trim()) delete PROJECT.skill_briefs[id];
+  else PROJECT.skill_briefs[id] = text;
+  syncFromForms(); markDirty("skill-brief"); updateSkillDesc();
+  byId("skill-dialog").close();
+}
+function revertSkillBrief() {
+  const id = byId("director.skill").value;
+  if (PROJECT.skill_briefs) delete PROJECT.skill_briefs[id];
+  byId("skill-text").value = shippedBrief(id);
+  byId("skill-revert").disabled = true;
+  syncFromForms(); markDirty("skill-brief"); updateSkillDesc();
+}
 
 // ─────────────── whisper download box ───────────────
 let WHISPER = {}, whisperPoll = null;
@@ -290,8 +323,11 @@ export function initSettings() {
   ["director", "hook", "chapters"].forEach(bindModelPicker);
   byId("btn-skills").onclick = (e) => { e.preventDefault(); loadSkills(); flash(byId("btn-skills"), "✓"); };
   byId("director.skill").addEventListener("change", updateSkillDesc);
-  byId("btn-skill-view").onclick = (e) => { e.preventDefault(); const sk = SKILLS.find((x) => x.id === byId("director.skill").value); if (!sk) return; byId("skill-title").textContent = `${sk.emoji || ""} ${sk.name}`; byId("skill-path").textContent = `${SKILLS_DIR}/${sk.id}.md — edit the file or add your own, then press ↻`; byId("skill-text").textContent = sk.body; byId("skill-dialog").showModal(); };
+  byId("btn-skill-view").onclick = (e) => { e.preventDefault(); openSkillDialog(); };
   byId("skill-close").onclick = () => byId("skill-dialog").close();
+  byId("skill-save").onclick = saveSkillBrief;
+  byId("skill-revert").onclick = revertSkillBrief;
+  on("project", updateSkillDesc);
   byId("btn-reset").onclick = () => { applyDefaults(DEFAULTS); localStorage.removeItem("ave.preset"); presetHint(); syncFromForms(); markDirty("reset"); };
   byId("btn-save-preset").onclick = () => { localStorage.setItem("ave.preset", JSON.stringify({ ...collectOptions() })); flash(byId("btn-save-preset"), "Saved ✓"); presetHint(); };
   presetHint();

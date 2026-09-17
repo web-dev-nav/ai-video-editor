@@ -1,12 +1,12 @@
 // Multi-track timeline: ruler + Video (kept pieces / cut markers), Voiceover cues, Music.
 import { byId, esc, mmss, clamp, baseName } from "./ui.js";
-import { PROJECT, SEL, on, emit, select, srcToOut, outDuration, hasCuts, markDirty, outToSrc, round3 } from "./state.js";
+import { PROJECT, SEL, on, emit, select, srcToOut, outDuration, hasCuts, markDirty, outToSrc, round3, segments, segAtSrc } from "./state.js";
 import { disp } from "./translit.js";
-import { reorderClip, addClip } from "./browser.js";
+import { reorderClip, addClip, removeClip } from "./browser.js";
 
 const CLIP_COLORS = ["#2f3d5c", "#3b3358", "#2f4a4a", "#4a3a2f", "#3a4a2f", "#4a2f3f"];
-function clipSpans() {   // [{i, name, s, e}] in SOURCE time (the combined timeline)
-  let off = 0; return (PROJECT.source.clips || []).map((c, i) => { const s = off; off += c.duration_sec || 0; return { i, name: c.name, s, e: off }; });
+function clipSpans() {   // [{i, name, path, s, e}] in SOURCE time (the combined timeline)
+  let off = 0; return (PROJECT.source.clips || []).map((c, i) => { const s = off; off += c.duration_sec || 0; return { i, name: c.name, path: c.path, s, e: off }; });
 }
 
 let pxPerSec = 12;
@@ -27,14 +27,15 @@ export function render() {
   if (!P.source.inputs.length) tv.innerHTML = ``;
   else if (!hasCuts()) {
     // One block per clip, in sequence order; drag to reorder.
-    const spans = clipSpans().length ? clipSpans() : [{ i: 0, name: baseName(P.source.inputs[0]), s: 0, e: totalSec() }];
+    const spans = clipSpans().length ? clipSpans() : [{ i: 0, name: baseName(P.source.inputs[0]), path: P.source.inputs[0], s: 0, e: totalSec() }];
     spans.forEach((c) => {
       const b = document.createElement("div"); b.className = "blk clip"; b.style.left = x(c.s) + "px"; b.style.width = Math.max(2, x(c.e) - x(c.s) - 2) + "px";
       b.style.background = CLIP_COLORS[c.i % CLIP_COLORS.length];
-      b.innerHTML = `${c.i + 1}. ${esc(c.name)}<small>${mmss(c.e - c.s)}${spans.length === 1 ? ` · ${P.mode === "ai" ? "Ask AI for a plan" : "Analyze"} to see cuts` : ""}</small>`;
-      b.title = spans.length > 1 ? `${c.name} · drag to reorder` : c.name;
+      b.innerHTML = `${c.i + 1}. ${esc(c.name)}<small>${mmss(c.e - c.s)}${spans.length === 1 ? ` · ${P.mode === "ai" ? "Ask AI for a plan" : "Analyze"} to see cuts` : ""}</small><button class="x" title="Remove this clip from the timeline">✕</button>`;
+      b.title = spans.length > 1 ? `${c.name} · drag to reorder · ✕ to remove` : `${c.name} · ✕ to remove`;
       b.ondblclick = () => emit("seek", c.s);
       if (spans.length > 1) makeClipDraggable(b, c, spans);
+      wireClipRemove(b, c);
       tv.appendChild(b);
     });
   } else {
@@ -44,23 +45,29 @@ export function render() {
       tv.appendChild(lane); tv.classList.add("with-lane");
     } else tv.classList.remove("with-lane");
     const pieces = P.pieces.length ? P.pieces : P.keep_segments.map((k, i) => ({ id: "s" + i, kind: "kept", start: k.start, end: k.end, enabled: true, text: "" }));
-    for (const p of pieces) {
-      if (p.enabled) {
-        const a = srcToOut(p.start), b = srcToOut(p.end);
-        const el = document.createElement("div"); el.className = `blk ${p.kind === "kept" ? "kept" : "restored"}${SEL.kind === "piece" && SEL.id === p.id ? " selected" : ""}`;
-        el.style.left = x(a) + "px"; el.style.width = Math.max(2, x(b) - x(a) - 1) + "px";
-        el.title = `${mmss(p.start)}–${mmss(p.end)} (source) · ${disp(p.text) || ""}`;
-        el.innerHTML = `${esc(disp(p.text) || (p.kind === "kept" ? "kept" : "restored"))}<small>${mmss(a)} · ${(p.end - p.start).toFixed(1)}s</small>`;
-        el.onclick = (e) => { e.stopPropagation(); select("piece", p.id); };
-        el.ondblclick = () => emit("seek", a);
-        tv.appendChild(el);
-      } else {
-        const a = srcToOut(p.start);
-        const el = document.createElement("div"); el.className = "cutmark" + (SEL.kind === "piece" && SEL.id === p.id ? " selected" : "");
-        el.style.left = x(a) + "px"; el.title = `Cut: ${mmss(p.start)}–${mmss(p.end)} · ${p.reason || ""} · ${disp(p.text || "").slice(0, 80)}`;
-        el.onclick = (e) => { e.stopPropagation(); select("piece", p.id); };
-        tv.appendChild(el);
-      }
+    // Kept blocks tile the finalized keep segments exactly, so the boundary padding the
+    // server adds around each range shows up as part of its block instead of as a gap.
+    const segs = segments(), bySeg = segs.map(() => []);
+    for (const p of pieces.filter((p) => p.enabled)) {
+      const i = segAtSrc((p.start + p.end) / 2);
+      if (i >= 0) bySeg[i].push(p);
+    }
+    segs.forEach((m, i) => {
+      const segStart = m.off, segEnd = m.off + (m.e - m.s);
+      const ps = bySeg[i].sort((a, b) => a.start - b.start);
+      if (!ps.length) { tv.appendChild(keptBlock({ id: "s" + i, kind: "kept", start: m.s, end: m.e, text: "" }, segStart, segEnd)); return; }
+      ps.forEach((p, j) => {
+        const a = j === 0 ? segStart : srcToOut(p.start);
+        const b = j === ps.length - 1 ? segEnd : srcToOut(ps[j + 1].start);
+        tv.appendChild(keptBlock(p, a, b));
+      });
+    });
+    for (const p of pieces.filter((p) => !p.enabled)) {
+      const a = srcToOut(p.start);
+      const el = document.createElement("div"); el.className = "cutmark" + (SEL.kind === "piece" && SEL.id === p.id ? " selected" : "");
+      el.style.left = x(a) + "px"; el.title = `Cut: ${mmss(p.start)}–${mmss(p.end)} · ${p.reason || ""} · ${disp(p.text || "").slice(0, 80)}`;
+      el.onclick = (e) => { e.stopPropagation(); select("piece", p.id); };
+      tv.appendChild(el);
     }
   }
   // ── voiceover track
@@ -95,6 +102,30 @@ export function render() {
     tm.appendChild(el);
   } else tm.innerHTML = ``;
   setPlayhead(lastOut);
+}
+
+// One kept/restored block spanning [a, b] on the EDITED timeline.
+function keptBlock(p, a, b) {
+  const el = document.createElement("div");
+  el.className = `blk ${p.kind === "kept" ? "kept" : "restored"}${SEL.kind === "piece" && SEL.id === p.id ? " selected" : ""}`;
+  el.style.left = x(a) + "px"; el.style.width = Math.max(2, x(b) - x(a)) + "px";
+  el.title = `${mmss(p.start)}–${mmss(p.end)} (source) · ${disp(p.text) || ""}`;
+  el.innerHTML = `${esc(disp(p.text) || (p.kind === "kept" ? "kept" : "restored"))}<small>${mmss(a)} · ${(b - a).toFixed(1)}s</small>`;
+  el.onclick = (e) => { e.stopPropagation(); select("piece", p.id); };
+  el.ondblclick = () => emit("seek", a);
+  return el;
+}
+
+// ✕ on a clip block — takes the clip out of the sequence without going back to 📁 Media.
+function wireClipRemove(el, clip) {
+  const btn = el.querySelector(".x");
+  if (!btn || !clip.path) { if (btn) btn.remove(); return; }
+  btn.addEventListener("pointerdown", (e) => e.stopPropagation());   // don't start a reorder drag
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (PROJECT.transcript && !confirm(`Remove "${clip.name}" from the timeline? The transcript for this source is discarded.`)) return;
+    removeClip(clip.path);
+  };
 }
 
 function renderRuler(W) {

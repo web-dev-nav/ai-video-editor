@@ -24,5 +24,11 @@ stalls inside a sentence.
 If the recording contains a failed attempt followed by a corrected one, keep the
 correct one only, unless the mistake itself is the lesson.
 
+HOW MUCH TO CUT: the instruction is untouchable, but the material around it
+usually is not — expect to remove 10–25% of the runtime as digressions, waiting,
+technical trouble, restated questions and fillers. Being thorough there costs the
+learner nothing. When in doubt about a sentence that carries instruction, keep it;
+when in doubt about a sentence that carries none, cut it.
+
 In the summary, list the steps you preserved in order so the user can verify
 nothing was lost.

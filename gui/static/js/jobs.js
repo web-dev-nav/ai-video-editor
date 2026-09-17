@@ -73,9 +73,39 @@ export function togglePiece(id) {
   renderPlanBox();
 }
 
+// ─────────────── starting the edit over (keeping the transcript) ───────────────
+// Clears the cuts, the plan and the selection but never PROJECT.transcript, so going
+// back to a blank slate does not throw away the transcription.
+export function resetCuts() {
+  const P = PROJECT;
+  P.pieces = []; P.plan = null; P.plan_cost = null; P.keep_exact = false;
+  select(null, null);
+  setKeepSegments([], false);
+  markDirty("reset-cuts");
+  renderPlanBox(); renderTranscript(); updateRunButton();
+}
+function resetCutsClick() {
+  if (!PROJECT.pieces.length && !hasCuts()) return;
+  if (!confirm("Clear every cut and start the edit over?\n\nThe transcript is kept, so re-analyzing will not transcribe again.")) return;
+  resetCuts();
+  byId("result").innerHTML = `<div class="banner info">Cuts cleared — the transcript is still here. ${PROJECT.mode === "ai" ? "Ask AI for a plan" : "Analyze & cut"} to start over.</div>`;
+}
+function replanClick() {
+  if (PROJECT.mode !== "ai") { showAlert("other", "<b>Re-plan needs the AI editor.</b> Switch the Edit tab to ✨ AI editor, or press <b>Analyze &amp; cut</b> to run the Auto rules again."); return; }
+  if (PROJECT.pieces.length && !confirm("Discard these cuts and ask the AI for a fresh plan?\n\nThe transcript is reused, so you only pay for the AI call.")) return;
+  resetCuts();
+  submit("plan");
+}
+function updatePlanActions() {
+  const has = !!(PROJECT.pieces.length || hasCuts());
+  byId("btn-replan").hidden = PROJECT.mode !== "ai";
+  byId("btn-reset-cuts").disabled = !has;
+}
+
 // ─────────────── plan review box (Edit tab) ───────────────
 export function renderPlanBox() {
   const P = PROJECT, card = byId("plan-card"), box = byId("plan-box");
+  updatePlanActions();
   if (!P.pieces.length) { card.hidden = true; return; }
   card.hidden = false;
   const plan = P.plan, cost = P.plan_cost;
@@ -259,12 +289,14 @@ export function initJobs() {
   byId("btn-auto-oneshot").onclick = () => { if (PROJECT.mode !== "auto") return; submit("process"); };
   byId("btn-ai-oneshot").onclick = () => submit("process");
   byId("btn-analyze").onclick = () => submit("analyze");
+  byId("btn-reset-cuts").onclick = resetCutsClick;
+  byId("btn-replan").onclick = replanClick;
   byId("btn-cancel").onclick = async () => { if (currentJob) await api.jobCancel(currentJob); };
   byId("btn-toggle-log").onclick = () => { const l = byId("log"); l.hidden = !l.hidden; byId("btn-toggle-log").textContent = l.hidden ? "Show log" : "Hide log"; };
   byId("btn-show-config").onclick = async () => { if (!currentJob) return; byId("config-text").textContent = await api.jobConfig(currentJob); byId("config-dialog").showModal(); };
   byId("config-close").onclick = () => byId("config-dialog").close();
   byId("jobs-bar").onclick = () => openJobs();
-  on("clips", updateRunButton); on("mode", updateRunButton); on("project", () => { renderPlanBox(); renderTranscript(); updateRunButton(); });
+  on("clips", updateRunButton); on("mode", () => { updateRunButton(); updatePlanActions(); }); on("project", () => { renderPlanBox(); renderTranscript(); updateRunButton(); });
   on("pieces", updateRunButton); on("selection", renderPlanBox);
   refreshJobs(); updateRunButton();
 }

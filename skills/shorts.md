@@ -29,5 +29,9 @@ LENGTH: target 20–45 s unless the user gives a length; hard maximum 60 s unles
 the user explicitly allows longer. If the material genuinely needs more, say so
 in the summary and give the tightest version you can.
 
+SECOND PASS: once you have a cut, add up its duration. If it is over the target,
+go through it again and remove the weakest remaining sentence, repeatedly, until
+it fits. Being under target is fine; being over is not.
+
 Also offer, in the summary, one alternative idea from the talk that would make a
-second Short.
+second Short, and state the final duration of the cut you produced.
